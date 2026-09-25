@@ -51,4 +51,4 @@ function routeOverlap(points, origin, destination) {
   return { overlapScore, distAlongRoute: distanceAlongRoute, fraction: totalDistance ? distanceAlongRoute / totalDistance : 0 };
 }
 
-module.exports = { km, getRoute, pointToRouteDist, routeOverlap };
+module.exports = { NH, km, getRoute, pointToRouteDist, routeOverlap };

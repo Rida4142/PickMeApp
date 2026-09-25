@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Linking, Platform, SafeAreaView, ScrollView, Text, TouchableOpacity, View } from 'react-native';
-import { api } from '../api';
+import { Alert, Image, Linking, Platform, SafeAreaView, ScrollView, Switch, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import { Picker } from '@react-native-picker/picker';
+import { api, session } from '../api';
 import { C, s, Btn, In, Stars } from '../ui';
+import { getCurrentGeneralLocation } from '../utils/location';
 
 const DAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const say = (message) => Platform.OS === 'web' ? window.alert(message) : Alert.alert('PickMe', message);
@@ -36,7 +38,93 @@ export function TripsScreen({ me }) {
   return <><Text style={s.h2}>Trips & Ratings</Text>{trips.length === 0 && <Text style={s.mute}>Completed trips show up here.</Text>}{trips.map((trip) => { const people = [trip.driverId, ...(trip.riders || [])].filter((person) => person && String(person._id) !== String(me?._id)); const rated = trip.rated || []; return <View key={trip._id} style={s.card}><Text style={s.name}>{trip.origin?.name || 'Unknown pickup'} → {trip.dest?.name || 'Unknown destination'}</Text><Text style={s.mute}>{trip.createdAt ? new Date(trip.createdAt).toDateString() : 'Recent trip'} · {trip.distanceKm || 0} km</Text><Text style={{ fontSize: 22, fontWeight: '800', marginVertical: 6 }}>Rs. {trip.perPerson || 0} each</Text>{people.map((person) => <View key={person._id} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}><Text>{person.name || 'Participant'}</Text>{rated.includes(String(person._id)) ? <Text style={s.mute}>Rated ✓</Text> : <Stars v={0} set={(stars) => rate(trip._id, person._id, stars)} />}</View>)}</View>; })}</>;
 }
 
-export function ProfileScreen({ me, logout, go, setForm }) {
-  const [commutes, setCommutes] = useState([]); const [profile, setProfile] = useState(null); const load = () => { api('/api/commutes/mine').then(setCommutes).catch(() => {}); api(`/api/users/${me._id}`).then(setProfile).catch(() => {}); }; useEffect(load, []);
-  return <><Text style={s.h2}>Profile</Text><View style={s.card}><Text style={s.name}>{me.name}</Text><Text style={s.mute}>{me.phone} · {me.email}</Text><Text style={{ marginTop: 6 }}>★ {profile?.avg || 'New'} · {profile?.count || 0} ratings</Text></View><Text style={s.lbl}>My commutes</Text>{commutes.length === 0 && <Text style={s.mute}>Nothing posted yet — use the ＋ tab.</Text>}{commutes.map((commute) => <View key={commute._id} style={s.card}><Text style={{ fontWeight: '700' }}>{commute.origin.name} → {commute.dest.name}</Text><Text style={s.mute}>{commute.startTime}–{commute.endTime} · {commute.role} · {commute.days.map((day) => DAYS[day]).join('')} · {commute.paused ? 'Paused' : 'Active'}</Text><View style={{ flexDirection: 'row', gap: 14, marginTop: 10 }}><Text onPress={() => { setForm({ ...commute, seats: String(commute.seats), price: String(commute.price) }); go('post'); }} style={{ color: C.blue, fontWeight: '700' }}>Edit</Text><Text onPress={() => api(`/api/commutes/${commute._id}`, { paused: !commute.paused }, 'PATCH').then(load)} style={{ fontWeight: '700' }}>{commute.paused ? 'Resume' : 'Pause'}</Text><Text onPress={() => api(`/api/commutes/${commute._id}`, null, 'DELETE').then(load)} style={{ color: C.red, fontWeight: '700' }}>Delete</Text></View></View>)}<Btn dark t="Log out" onPress={logout} /></>;
+export function ProfileScreen({ me, logout, go, setForm, setMe }) {
+  const { width } = useWindowDimensions();
+  const userId = me?._id || me?.id;
+  const [commutes, setCommutes] = useState([]);
+  const [locations, setLocations] = useState([]);
+  const [buddies, setBuddies] = useState([]);
+  const [occupancy, setOccupancy] = useState({});
+  const [profile, setProfile] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [editingVehicle, setEditingVehicle] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [locationStatus, setLocationStatus] = useState('idle');
+  const [locationError, setLocationError] = useState('');
+  const [profileDraft, setProfileDraft] = useState({ name: '', email: '', phone: '', gender: '', city: '', currentLocation: null });
+  const [vehicleDraft, setVehicleDraft] = useState({ make: '', model: '', type: '', color: '', passengerCapacity: '', active: true });
+  const user = profile?.user || me;
+  const vehicle = user?.vehicle;
+  const load = async () => {
+    setLoading(true); setError('');
+    try {
+      if (!userId) throw new Error('Your session does not contain a user ID. Please log in again.');
+      const [userData, commuteData] = await Promise.all([api(`/api/users/${userId}`), api('/api/commutes/mine')]);
+      setProfile(userData); setCommutes(commuteData || []);
+      const [locationData, buddyData] = await Promise.all([api('/api/locations').catch(() => []), api('/api/buddies').catch(() => [])]);
+      setLocations(locationData || []); setBuddies(buddyData || []);
+      const occupancyEntries = await Promise.all((commuteData || []).map(async (commute) => [commute._id, await api(`/api/commutes/${commute._id}/occupancy`).catch(() => null)]));
+      setOccupancy(Object.fromEntries(occupancyEntries.filter(([, value]) => value)));
+    } catch (loadError) {
+      console.error('Profile load failed', loadError);
+      if (loadError.message === 'Not found') { await logout(); return; }
+      setError(loadError.message || 'Unable to load your profile. Try again.');
+    }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [userId]);
+  const startProfileEdit = () => { const gender=user.gender?String(user.gender).charAt(0).toUpperCase()+String(user.gender).slice(1).toLowerCase():''; setProfileDraft({ name: user.name || '', email: user.email || '', phone: user.phone || '', gender, city: user.city || '', currentLocation: null }); setEditingProfile(true); setError(''); };
+  const startVehicleEdit = () => { setVehicleDraft({ make: vehicle?.make || '', model: vehicle?.model || '', type: vehicle?.type || '', color: vehicle?.color || '', passengerCapacity: String(vehicle?.passengerCapacity || vehicle?.seats || ''), active: vehicle?.active !== false }); setEditingVehicle(true); setError(''); };
+  const setProfileField = (key, value) => setProfileDraft((current) => ({ ...current, [key]: value }));
+  const setVehicleField = (key, value) => setVehicleDraft((current) => ({ ...current, [key]: value }));
+  const chooseLocation = async () => {
+    setLocationStatus('loading'); setLocationError('');
+    try { const location = await getCurrentGeneralLocation(); setProfileDraft((current) => ({ ...current, city: location.publicLabel, currentLocation: location })); setLocationStatus('ready'); }
+    catch (locationLoadError) { setLocationStatus('error'); setLocationError(locationLoadError.message || 'Unable to get your current location.'); }
+  };
+  const saveProfile = async () => {
+    if (!profileDraft.name.trim()) return setError('Name is required.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profileDraft.email.trim())) return setError('Enter a valid email address.');
+    if (!profileDraft.gender) return setError('Gender is required.');
+    setSaving(true); setError('');
+    try {
+      const updated = await api(`/api/users/${userId}`, { name: profileDraft.name.trim(), email: profileDraft.email.trim(), phone: profileDraft.phone.trim(), gender: profileDraft.gender, city: profileDraft.city.trim(), currentLocation: profileDraft.currentLocation || undefined }, 'PUT');
+      const nextUser = { ...user, ...updated, name: profileDraft.name.trim(), email: profileDraft.email.trim(), phone: updated.phone || profileDraft.phone.trim(), gender: profileDraft.gender, city: profileDraft.city.trim() };
+      setProfile((current) => ({ ...current, user: nextUser }));
+      setMe(nextUser);
+      const saved = await session.load(); if (saved?.t) await session.save(saved.t, nextUser);
+      setEditingProfile(false);
+    } catch (saveError) { setError(saveError.message || 'Unable to save profile.'); }
+    finally { setSaving(false); }
+  };
+  const saveVehicle = async () => {
+    const passengerCapacity = Number(vehicleDraft.passengerCapacity);
+    if (!vehicleDraft.make.trim() || !vehicleDraft.model.trim() || !vehicleDraft.type.trim() || !vehicleDraft.color.trim()) return setError('Complete all vehicle fields.');
+    if (!Number.isInteger(passengerCapacity) || passengerCapacity < 1) return setError('Passenger capacity must be a whole number greater than zero.');
+    setSaving(true); setError('');
+    try {
+      const result = await api(`/api/users/${userId}/vehicle`, { ...vehicleDraft, passengerCapacity }, 'PUT');
+      setProfile((current) => ({ ...current, user: { ...current.user, vehicle: result.vehicle } })); setEditingVehicle(false);
+    } catch (saveError) { setError(saveError.message || 'Unable to save vehicle.'); }
+    finally { setSaving(false); }
+  };
+  if (loading) return <View style={s.profileContainer}><Text style={s.h2}>Profile</Text><Text style={s.mute}>Loading profile...</Text></View>;
+  if (error && !profile) return <View style={s.profileContainer}><Text style={s.h2}>Profile</Text><Text style={s.authError}>{error}</Text><Btn yellow t="Try again" onPress={load} /></View>;
+  const initials = (user.name || 'P').split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase();
+  const rating = profile?.rating || { average: 0, count: 0 };
+  const primaryOccupancy = commutes.length ? occupancy[commutes[0]._id] : null;
+  return <View style={[s.profileContainer, { maxWidth: width >= 700 ? 780 : 780 }]}>
+    <View style={s.profileHeader}><View style={s.profileAvatar}>{user.profileImage ? <Image source={{ uri: user.profileImage }} style={s.profileAvatarImage} /> : <Text style={s.profileAvatarText}>{initials}</Text>}</View><View style={s.profileIdentity}><Text style={s.h2}>{user.name || 'Name not available'}</Text><Text style={s.mute}>{user.email || 'Email not available'}</Text><Text style={s.mute}>{user.phone || 'Phone not available'}</Text></View><TouchableOpacity onPress={startProfileEdit}><Text style={s.profileLink}>Edit profile</Text></TouchableOpacity></View>
+    {!!error && <Text style={s.authError}>{error}</Text>}
+    {editingProfile ? <View style={s.card}><Text style={s.sectionTitle}>Personal information</Text><Text style={s.authLabel}>Full Name *</Text><In value={profileDraft.name} onChangeText={(value) => setProfileField('name', value)} /><Text style={s.authLabel}>Email *</Text><In value={profileDraft.email} autoCapitalize="none" keyboardType="email-address" onChangeText={(value) => setProfileField('email', value)} /><Text style={s.authLabel}>Phone Number</Text><In value={profileDraft.phone} keyboardType="phone-pad" onChangeText={(value) => setProfileField('phone', value)} /><Text style={s.authLabel}>Gender *</Text><View style={s.selectWrap}><Picker selectedValue={profileDraft.gender} onValueChange={(value) => setProfileField('gender', value)} style={s.genderPicker}><Picker.Item label="Select gender" value="" /><Picker.Item label="Female" value="Female" /><Picker.Item label="Male" value="Male" /><Picker.Item label="Non-binary" value="Non-binary" /><Picker.Item label="Prefer not to say" value="Prefer not to say" /></Picker></View><Text style={s.authLabel}>Current/general location</Text><In value={profileDraft.city} editable={false} placeholder="Location not available" /><TouchableOpacity onPress={chooseLocation} disabled={locationStatus === 'loading'}><Text style={s.profileLink}>{locationStatus === 'loading' ? 'Getting current location...' : 'Use my current location'}</Text></TouchableOpacity>{!!locationError && <Text style={s.authError}>{locationError}</Text>}<View style={s.profileButtonRow}><Btn small outline t="Cancel" onPress={() => setEditingProfile(false)} /><Btn small yellow t={saving ? 'Saving...' : 'Save profile'} disabled={saving} onPress={saveProfile} /></View></View> : <View style={s.card}><Text style={s.sectionTitle}>Personal information</Text><Text style={s.profileValueLabel}>Gender</Text><Text style={s.profileValue}>{user.gender || 'Gender not available'}</Text><Text style={s.profileValueLabel}>Current/general location</Text><Text style={s.profileValue}>{user.city || 'Location not available'}</Text></View>}
+    <View style={s.card}><Text style={s.sectionTitle}>Rating</Text>{rating.count > 0 ? <View style={s.ratingRow}><Text style={s.ratingNumber}>★ {rating.average}</Text><Text style={s.mute}>{rating.count} ratings</Text></View> : <Text style={s.mute}>No ratings yet</Text>}{profile?.reviews?.slice(0, 3).map((review, index) => <View key={index} style={s.reviewRow}><Text style={s.name}>{review.from || 'PickMe user'} · {review.stars}/5</Text>{review.comment && <Text style={s.mute}>{review.comment}</Text>}</View>)}</View>
+    <View style={s.card}><View style={s.sectionHeaderRow}><Text style={s.sectionTitle}>Vehicle</Text><TouchableOpacity onPress={startVehicleEdit}><Text style={s.profileLink}>{vehicle ? 'Edit vehicle' : 'Add vehicle'}</Text></TouchableOpacity></View>{editingVehicle ? <><Text style={s.authLabel}>Make</Text><In value={vehicleDraft.make} onChangeText={(value) => setVehicleField('make', value)} /><Text style={s.authLabel}>Model</Text><In value={vehicleDraft.model} onChangeText={(value) => setVehicleField('model', value)} /><Text style={s.authLabel}>Type</Text><In value={vehicleDraft.type} onChangeText={(value) => setVehicleField('type', value)} /><Text style={s.authLabel}>Color</Text><In value={vehicleDraft.color} onChangeText={(value) => setVehicleField('color', value)} /><Text style={s.authLabel}>Passenger capacity</Text><In keyboardType="numeric" value={vehicleDraft.passengerCapacity} onChangeText={(value) => setVehicleField('passengerCapacity', value)} /><View style={s.switchRow}><Text style={s.profileValue}>Vehicle active</Text><Switch value={vehicleDraft.active} onValueChange={(value) => setVehicleField('active', value)} /></View><View style={s.profileButtonRow}><Btn small outline t="Cancel" onPress={() => setEditingVehicle(false)} /><Btn small yellow t={saving ? 'Saving...' : 'Save vehicle'} disabled={saving} onPress={saveVehicle} /></View></> : vehicle ? <><Text style={s.profileVehicleTitle}>{vehicle.make || ''} {vehicle.model || ''}</Text><Text style={s.profileValue}>{vehicle.type || 'Type not available'} · {vehicle.color || 'Color not available'}</Text><Text style={s.profileValue}>{vehicle.passengerCapacity || vehicle.seats || 0} passenger capacity · {vehicle.active === false ? 'Inactive' : 'Active'}</Text></> : <Text style={s.mute}>No vehicle added</Text>}</View>
+    {vehicle && primaryOccupancy && <View style={s.occupancyBox}><Text style={s.profileValue}>Next occurrence: {primaryOccupancy.date}</Text><View style={s.seatGrid}>{primaryOccupancy.seats.map((seat) => <View key={seat.number} style={[s.seat, seat.status === 'occupied' ? s.seatOccupied : s.seatOpen]}><Text style={s.seatNumber}>S{seat.number}</Text><Text style={s.seatStatus}>{seat.status.toUpperCase()}</Text></View>)}</View><Text style={s.profileValue}>Open: {primaryOccupancy.availableSeats} · Occupied: {primaryOccupancy.occupiedSeats}</Text></View>}
+    <View style={s.card}><Text style={s.sectionTitle}>Saved locations</Text>{locations.length === 0 ? <Text style={s.mute}>No saved locations</Text> : locations.map((location) => <View key={location._id} style={s.listRow}><Text style={s.name}>{location.label || 'Saved location'}</Text><Text style={s.mute}>{location.name || 'General location'}</Text></View>)}</View>
+    <View style={s.card}><Text style={s.sectionTitle}>Buddies</Text>{buddies.length === 0 ? <Text style={s.mute}>No buddies yet</Text> : buddies.map((entry) => <View key={entry._id} style={s.buddyRow}><View style={s.buddyAvatar}>{entry.buddy?.profileImage ? <Image source={{ uri: entry.buddy.profileImage }} style={s.buddyImage} /> : <Text style={s.buddyInitial}>{(entry.buddy?.name || 'P')[0].toUpperCase()}</Text>}</View><View><Text style={s.name}>{entry.buddy?.name || 'PickMe user'}</Text><Text style={s.mute}>{entry.buddy?.city || 'Location not available'}</Text></View></View>)}</View>
+    <Text style={s.sectionTitle}>My commutes</Text>{commutes.length === 0 && <Text style={s.mute}>Nothing posted yet — use the + tab.</Text>}{commutes.map((commute) => { const data=occupancy[commute._id]; return <View key={commute._id} style={s.card}><Text style={{ fontWeight: '700' }}>{commute.origin.name} → {commute.dest.name}</Text><Text style={s.mute}>{commute.startTime}–{commute.endTime} · {commute.role} · {commute.days.map((day) => DAYS[day]).join('')} · {commute.paused ? 'Paused' : 'Active'}</Text>{data && <View style={s.occupancyBox}><Text style={s.mute}>Next occurrence: {data.date}</Text><View style={s.seatGrid}>{data.seats.map((seat) => <View key={seat.number} style={[s.seat, seat.status === 'occupied' ? s.seatOccupied : s.seatOpen]}><Text style={s.seatNumber}>S{seat.number}</Text><Text style={s.seatStatus}>{seat.status.toUpperCase()}</Text></View>)}</View><Text style={s.profileValue}>Open: {data.availableSeats} · Occupied: {data.occupiedSeats}</Text></View>}<View style={s.profileActionRow}><Text onPress={() => { setForm({ ...commute, seats: String(commute.seats || commute.passengerCapacity || 1), price: String(commute.price || 0) }); go('post'); }} style={s.profileLink}>Edit</Text><Text onPress={() => api(`/api/commutes/${commute._id}`, { paused: !commute.paused }, 'PATCH').then(load)} style={s.profileLink}>{commute.paused ? 'Resume' : 'Pause'}</Text><Text onPress={() => api(`/api/commutes/${commute._id}`, null, 'DELETE').then(load)} style={s.profileDanger}>Delete</Text></View></View>; })}
+    <View style={s.profileLogout}><Btn red t="Log out" onPress={logout} /></View>
+  </View>;
 }

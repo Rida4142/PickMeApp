@@ -12,11 +12,24 @@ const User = model('User', new Schema({
   email: String,
   cnic: String,
   password: String,
+  profileImage: { type: String, default: null },
   verified: { type: Boolean, default: false },
-  gender: String,
+  gender: { type: String, required: true, trim: true },
   city: String,
-  rideCapability: { type: String, default: 'need', enum: ['need', 'offer', 'either'] },
-  vehicle: { make: String, model: String, type: String, color: String, seats: Number },
+  currentLocation: {
+    publicLabel: String,
+    privateCoordinates: { lat: Number, lng: Number },
+    capturedAt: Date,
+  },
+  vehicle: new Schema({
+    make: String,
+    model: String,
+    type: String,
+    color: String,
+    passengerCapacity: { type: Number, min: 1 },
+    seats: Number,
+    active: { type: Boolean, default: true },
+  }, { _id: false }),
   blocked: [ID],
   blockedBy: [ID],
 }, timestamps));
@@ -31,6 +44,8 @@ const Commute = model('Commute', new Schema({
   startDate: String,
   endDate: String,
   role: String,
+  rideMode: { type: String, enum: ['own_vehicle', 'hired_shared_ride'], default: 'own_vehicle' },
+  passengerCapacity: { type: Number, min: 1 },
   seats: Number,
   price: Number,
   active: { type: Boolean, default: true },
@@ -46,15 +61,48 @@ const SavedLocation = model('SavedLocation', new Schema({
 
 const Notification = model('Notification', new Schema({
   userId: { type: ID, ref: 'User' }, type: String, message: String,
-  rideId: ID, read: { type: Boolean, default: false }, data: Schema.Types.Mixed,
+  rideId: ID, commuteId: ID, bookingId: ID, tripId: ID,
+  scheduledFor: Date, channel: String, status: { type: String, default: 'pending' },
+  read: { type: Boolean, default: false }, data: Schema.Types.Mixed,
 }, timestamps));
 
 const Request = model('Request', new Schema({
   commuteId: { type: ID, ref: 'Commute' },
   fromUser: { type: ID, ref: 'User' },
   toUser: { type: ID, ref: 'User' },
-  status: { type: String, default: 'pending' },
+  requestedDate: String,
+  requestedDay: Number,
+  message: String,
+  status: { type: String, default: 'pending', enum: ['pending', 'accepted', 'rejected', 'cancelled', 'completed'] },
   tripId: ID,
+}, timestamps));
+
+const Booking = model('Booking', new Schema({
+  commuteId: { type: ID, ref: 'Commute', required: true },
+  passengerId: { type: ID, ref: 'User', required: true },
+  requestId: { type: ID, ref: 'Request' },
+  acceptedBy: { type: ID, ref: 'User' },
+  requestedDate: String,
+  requestedDay: Number,
+  seatNumber: Number,
+  status: { type: String, default: 'pending', enum: ['pending', 'confirmed', 'cancelled', 'completed'] },
+}, timestamps));
+Booking.schema.index({ requestId: 1 }, { unique: true, sparse: true });
+
+const Buddy = model('Buddy', new Schema({
+  userId: { type: ID, ref: 'User', required: true },
+  buddyId: { type: ID, ref: 'User', required: true },
+  status: { type: String, default: 'pending', enum: ['pending', 'accepted', 'rejected', 'blocked', 'removed'] },
+}, timestamps));
+Buddy.schema.index({ userId: 1, buddyId: 1 }, { unique: true });
+
+const Invitation = model('Invitation', new Schema({
+  commuteId: { type: ID, ref: 'Commute', required: true },
+  inviterId: { type: ID, ref: 'User', required: true },
+  inviteeId: { type: ID, ref: 'User', required: true },
+  requestedDate: String,
+  requestedDay: Number,
+  status: { type: String, default: 'pending', enum: ['pending', 'accepted', 'rejected', 'cancelled'] },
 }, timestamps));
 
 const Trip = model('Trip', new Schema({
@@ -63,6 +111,7 @@ const Trip = model('Trip', new Schema({
   riders: [{ type: ID, ref: 'User' }],
   origin: Loc,
   dest: Loc,
+  tripDate: String,
   distanceKm: Number,
   fare: Number,
   perPerson: Number,
@@ -72,8 +121,24 @@ const Trip = model('Trip', new Schema({
 }, timestamps));
 
 const Rating = model('Rating', new Schema({
-  tripId: ID, fromUser: ID, toUser: ID, stars: Number, comment: String,
+  tripId: { type: ID, ref: 'Trip', required: true },
+  fromUser: { type: ID, ref: 'User', required: true },
+  toUser: {
+    type: ID,
+    ref: 'User',
+    required: true,
+    validate: { validator: function (value) { return !this.fromUser || String(value) !== String(this.fromUser); }, message: 'Users cannot rate themselves' },
+  },
+  stars: {
+    type: Number,
+    required: true,
+    min: 1,
+    max: 5,
+    validate: { validator: Number.isInteger, message: 'Stars must be an integer from 1 to 5' },
+  },
+  comment: { type: String, trim: true },
 }, timestamps));
+Rating.schema.index({ tripId: 1, fromUser: 1, toUser: 1 }, { unique: true });
 
 const Report = model('Report', new Schema({
   fromUser: ID, againstUser: ID, reason: String, description: String,
@@ -86,6 +151,9 @@ module.exports = {
   SavedLocation,
   Notification,
   Request,
+  Booking,
+  Buddy,
+  Invitation,
   Trip,
   Rating,
   Report,
