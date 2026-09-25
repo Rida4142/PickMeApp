@@ -1,0 +1,15 @@
+export const colors = {
+  primary: '#FFD93D',
+  primaryDark: '#F5B800',
+  secondary: '#5B4BFF',
+  accent: '#FF6B6B',
+  cream: '#FFF8E7',
+  ink: '#1B1B2F',
+  muted: '#8A8570',
+  border: '#F0E9D7',
+  card: '#FFFFFF',
+  blue: '#4F46E5',
+  mint: '#D6F5E3',
+  lilac: '#E4DCFF',
+  red: '#E5484D',
+};

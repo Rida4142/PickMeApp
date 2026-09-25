@@ -16,7 +16,7 @@ export default function RoutePicker({o,d,setO,setD}){
  const [act,setAct]=useState(o?'d':'o'),[q,setQ]=useState({o:o?.name||'',d:d?.name||''}),[opts,setOpts]=useState([]),t=useRef();
  const choose=p=>{(act==='o'?setO:setD)(p);setQ(x=>({...x,[act]:p.name}));setOpts([]);if(act==='o')setAct('d')};
  const onMap=async m=>{let p={lat:m.lat,lng:m.lng,name:m.lat.toFixed(4)+', '+m.lng.toFixed(4)};try{p=await api(`/api/reverse?lat=${m.lat}&lng=${m.lng}`)}catch{}choose(p)};
- useEffect(()=>{if(Platform.OS!=='web')return;const f=e=>{try{if(typeof e.data==='string')onMap(JSON.parse(e.data))}catch{}};window.addEventListener('message',f);return()=>window.removeEventListener('message',f)},[act]);
+ useEffect(()=>{if(Platform.OS!=='web')return;const f=e=>{try{if(typeof e.data==='string')onMap(JSON.parse(e.data))}catch{}};window.addEventListener('message',f);return()=>{window.removeEventListener('message',f);clearTimeout(t.current)}},[act]);
  const type=(k,txt)=>{setQ(x=>({...x,[k]:txt}));setAct(k);clearTimeout(t.current);if(txt.length<3)return setOpts([]);t.current=setTimeout(()=>api('/api/geocode?q='+encodeURIComponent(txt)).then(setOpts).catch(()=>{}),600)};
  const src=html(o,d);
  return <View>

@@ -1,73 +1,17 @@
 require('dotenv').config();
 const express=require('express'),cors=require('cors'),mongoose=require('mongoose'),bcrypt=require('bcryptjs'),jwt=require('jsonwebtoken');
 const app=express();app.use(cors());app.use(express.json());
-const {Schema,model}=mongoose,ID=Schema.Types.ObjectId,SECRET=process.env.JWT_SECRET||'pickme-dev';
-const Loc={name:String,lat:Number,lng:Number},T={timestamps:true};
-
-const User=model('User',new Schema({
-  name:String,phone:{type:String,unique:true},email:String,cnic:String,password:String,
-  verified:{type:Boolean,default:false},gender:String,city:String,
-  rideCapability:{type:String,default:'need',enum:['need','offer','either']},
-  vehicle:{make:String,model:String,type:String,color:String,seats:Number},
-  blocked:[ID],blockedBy:[ID]},T));
-
-const Commute=model('Commute',new Schema({
-  userId:{type:ID,ref:'User'},origin:Loc,dest:Loc,days:[Number],startTime:String,endTime:String,
-  startDate:String,endDate:String,role:String,seats:Number,price:Number,active:{type:Boolean,default:true},
-  paused:{type:Boolean,default:false},routeGeo:{type:Array,default:[]},distanceKm:Number},T));
-
-const SavedLocation=model('SavedLocation',new Schema({userId:{type:ID,ref:'User'},label:String,name:String,lat:Number,lng:Number,type:String},T));
-const Notification=model('Notification',new Schema({userId:{type:ID,ref:'User'},type:String,message:String,rideId:ID,read:{type:Boolean,default:false},data:Schema.Types.Mixed},T));
-const Request=model('Request',new Schema({
-  commuteId:{type:ID,ref:'Commute'},fromUser:{type:ID,ref:'User'},toUser:{type:ID,ref:'User'},
-  status:{type:String,default:'pending'},tripId:ID},T));
-const Trip=model('Trip',new Schema({
-  commuteId:ID,driverId:{type:ID,ref:'User'},riders:[{type:ID,ref:'User'}],origin:Loc,dest:Loc,
-  distanceKm:Number,fare:Number,perPerson:Number,status:{type:String,default:'pending',enum:['pending','confirmed','active','completed','cancelled']},
-  startTime:String,endTime:String},T));
-const Rating=model('Rating',new Schema({tripId:ID,fromUser:ID,toUser:ID,stars:Number,comment:String},T));
-const Report=model('Report',new Schema({fromUser:ID,againstUser:ID,reason:String,description:String,resolved:{type:Boolean,default:false}},T));
+const SECRET=process.env.JWT_SECRET||'pickme-dev';
+const {User,Commute,SavedLocation,Notification,Request,Trip,Rating,Report}=require('./models');
+const {km,getRoute,routeOverlap}=require('./services/routing');
 
 const h=f=>(q,s)=>Promise.resolve(f(q,s)).catch(e=>s.status(500).json({error:e.message}));
 const auth=(q,s,n)=>{try{q.uid=jwt.verify((q.headers.authorization||'').slice(7),SECRET).id;n()}catch(e){s.status(401).json({error:'Please log in'})}};
 const norm=p=>{p=(p||'').replace(/\D/g,'');return p.startsWith('0')?'92'+p.slice(1):p};
 const pub=u=>({_id:u._id,name:u.name,phone:u.phone,email:u.email,verified:u.verified,gender:u.gender,city:u.city,rideCapability:u.rideCapability||'need',vehicle:u.vehicle||null});
-const km=(a,b)=>{const r=x=>x*Math.PI/180,k=Math.sin(r(b.lat-a.lat)/2)**2+Math.cos(r(a.lat))*Math.cos(r(b.lat))*Math.sin(r(b.lng-a.lng)/2)**2;return 12742*Math.asin(Math.sqrt(k))};
 const mins=t=>{const[a,b]=(t||'08:00').split(':').map(Number);return a*60+b};
 const tok=u=>({token:jwt.sign({id:u._id},SECRET,{expiresIn:'30d'}),user:pub(u)});
 const DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-const NH={headers:{'User-Agent':'PickMe-Hackathon/1.0'}};
-
-// route geometry via OSRM public API (fallback to haversine * 1.3)
-async function getRoute(o,d){
-  if(!o||!d)return null;
-  try{
-    const r=await(await fetch(`https://router.project-osrm.org/route/v1/driving/${o.lng},${o.lat};${d.lng},${d.lat}?overview=full&geometries=geojson`,NH)).json();
-    if(r.code==='Ok'&&r.routes&&r.routes[0]){
-      const pts=r.routes[0].geometry.coordinates.map(([lng,lat])=>({lat,lng}));
-      return {points:pts,distanceKm:+(r.routes[0].distance/1000).toFixed(1)};
-    }
-  }catch(e){}
-  return {distanceKm:+(km(o,d)*1.3).toFixed(1),points:null};
-}
-
-// closest point distance on route polyline to a point
-function pointToRouteDist(p,pts){
-  if(!pts||!pts.length)return 0;
-  let best=Infinity;for(const pt of pts){const d=km(p,pt);if(d<best)best=d}return best;
-}
-
-// fraction of route overlap using route geometry, plus distance along route between two points
-function routeOverlap(pts,a,b){
-  if(!pts||pts.length<2){return 0}
-  let minA=Infinity,minB=Infinity,idxA=-1,idxB=-1;
-  for(let i=0;i<pts.length;i++){const da=km(a,pts[i]),db=km(b,pts[i]);if(da<minA){minA=da;idxA=i}if(db<minB){minB=db;idxB=i}}
-  let dist=0;for(let i=Math.min(idxA,idxB);i<Math.max(idxA,idxB);i++){dist+=km(pts[i],pts[i+1]||pts[i])}
-  const total=pts.reduce((d,i)=>d+km(i,pts[i+1]||i),0);
-  const frac=total>0?dist/total:0;
-  const overlapScore=Math.max(0,1-(minA+minB)/km(a,b));
-  return {overlapScore,distAlongRoute:dist};
-}
 
 // ---- auth: register / login / user detail
 app.post('/api/register',h(async(q,s)=>{
@@ -118,6 +62,10 @@ app.delete('/api/locations/:id',auth,h(async(q,s)=>{await SavedLocation.deleteOn
 
 // ---- commutes
 app.post('/api/commutes',auth,h(async(q,s)=>{const b=q.body;if(!b.origin||!b.dest)return s.status(400).json({error:'Pick both locations'});
+  if(!Array.isArray(b.days)||b.days.length===0)return s.status(400).json({error:'Select at least one commute day'});
+  if(!b.startDate||!b.endDate||b.endDate<b.startDate)return s.status(400).json({error:'Enter a valid date range'});
+  if(!b.startTime||!b.endTime)return s.status(400).json({error:'Enter departure and return times'});
+  if(!['need','offer','either'].includes(b.role||'need'))return s.status(400).json({error:'Choose a ride type'});
   const route=await getRoute(b.origin,b.dest);const seats=+b.seats||1;
   const c=await Commute.create({...b,userId:q.uid,seats,price:+b.price||0,routeGeo:route?.points||[],distanceKm:route?.distanceKm||+(km(b.origin,b.dest)*1.3).toFixed(1)});
   s.json(c);}));
@@ -137,10 +85,12 @@ app.post('/api/match',auth,h(async(q,s)=>{const m=q.body,me=await User.findById(
   const cs=await Commute.find({active:true,paused:false,userId:{$ne:q.uid,$nin:blocked}}).populate('userId','name phone verified gender city rideCapability vehicle');
   const rs=await Rating.aggregate([{$group:{_id:'$toUser',avg:{$avg:'$stars'},count:{$sum:1}}}]);const R=Object.fromEntries(rs.map(r=>[String(r._id),r]));
   const out=[];
+  const now=new Date().toISOString().slice(0,10);
   for(const c of cs){if(!c.userId)continue;
+    if(c.endDate&&c.endDate<now)continue;
     if(m.startDate&&m.endDate&&c.startDate&&c.endDate&&(c.endDate<m.startDate||m.endDate<c.startDate))continue;
     if(c.seats<=0)continue;
-    const compatible=(m.role==='need'&&c.role==='offer')||(m.role==='offer'&&c.role==='need')||(m.role==='either'||c.role==='either');
+    const compatible=(m.role==='either'||c.role==='either')||(m.role==='need'&&c.role==='offer')||(m.role==='offer'&&c.role==='need');
     if(!compatible)continue;
     const os=km(m.origin,c.origin),ds=km(m.dest,c.dest);
     let routeScore=0,distAlong=0;
@@ -240,5 +190,15 @@ async function seed(){
   console.log('Seeded demo data (login 03000000001 / demo1234)');
 }
 
-if(!process.env.MONGO_URL){console.error('Missing MONGO_URL in server/.env');process.exit(1)};
-mongoose.connect(process.env.MONGO_URL).then(async()=>{await seed();app.listen(process.env.PORT||3000,'0.0.0.0',()=>console.log('PickMe API up'))}).catch(e=>{console.error('Mongo error:',e.message);process.exit(1)});
+async function start() {
+  if(!process.env.MONGO_URL) throw new Error('Missing MONGO_URL in server/.env');
+  await mongoose.connect(process.env.MONGO_URL);
+  await seed();
+  return app.listen(process.env.PORT||3000,'0.0.0.0',()=>console.log('PickMe API up'));
+}
+
+module.exports = { app, start };
+
+if(require.main===module){
+  start().catch(e=>{console.error(e.message);process.exit(1)});
+}

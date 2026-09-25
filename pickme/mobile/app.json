@@ -1,1 +1,23 @@
-{"expo":{"name":"PickMe","slug":"pickme","version":"1.0.0","orientation":"portrait","backgroundColor":"#FFF8E7","newArchEnabled":true,"splash":{"backgroundColor":"#FFD93D","resizeMode":"contain"},"android":{"package":"com.pickme.app"},"web":{"bundler":"metro"}}}
+{
+  "expo": {
+    "name": "PickMe",
+    "slug": "pickme",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "backgroundColor": "#FFF8E7",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#FFD93D",
+      "resizeMode": "contain"
+    },
+    "android": {
+      "package": "com.pickme.app"
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      "@react-native-community/datetimepicker"
+    ]
+  }
+}
