@@ -31,7 +31,7 @@ export function RequestsScreen() {
 }
 
 export function TripsScreen({ me }) {
-  const [trips, setTrips] = useState([]); const load = () => api('/api/trips/mine').then(setTrips).catch((error) => say(error.message)); useEffect(load, []);
+  const [trips, setTrips] = useState([]); const load = () => api('/api/trips/mine').then((items) => setTrips((items || []).map((item) => item._doc ? { ...item._doc, rated: item.rated || [] } : item))).catch((error) => say(error.message)); useEffect(() => { load(); }, []);
   const rate = (tripId, toUser, stars) => api('/api/ratings', { tripId, toUser, stars }).then(load).catch((error) => say(error.message));
   return <><Text style={s.h2}>Trips & Ratings</Text>{trips.length === 0 && <Text style={s.mute}>Completed trips show up here.</Text>}{trips.map((trip) => { const people = [trip.driverId, ...(trip.riders || [])].filter((person) => person && String(person._id) !== String(me?._id)); const rated = trip.rated || []; return <View key={trip._id} style={s.card}><Text style={s.name}>{trip.origin?.name || 'Unknown pickup'} → {trip.dest?.name || 'Unknown destination'}</Text><Text style={s.mute}>{trip.createdAt ? new Date(trip.createdAt).toDateString() : 'Recent trip'} · {trip.distanceKm || 0} km</Text><Text style={{ fontSize: 22, fontWeight: '800', marginVertical: 6 }}>Rs. {trip.perPerson || 0} each</Text>{people.map((person) => <View key={person._id} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}><Text>{person.name || 'Participant'}</Text>{rated.includes(String(person._id)) ? <Text style={s.mute}>Rated ✓</Text> : <Stars v={0} set={(stars) => rate(trip._id, person._id, stars)} />}</View>)}</View>; })}</>;
 }

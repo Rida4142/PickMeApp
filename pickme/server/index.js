@@ -146,7 +146,7 @@ app.post('/api/trips',auth,h(async(q,s)=>{const{commuteId,distanceKm,fare}=q.bod
   const t=await Trip.create({commuteId,driverId:q.uid,riders:rq.map(r=>r.fromUser),origin:c.origin,dest:c.dest,distanceKm:+distanceKm,fare:+fare,perPerson:Math.round(+fare/(rq.length+1)),status:'completed'});
   await Request.updateMany({commuteId,status:'accepted'},{status:'completed',tripId:t._id});s.json(t);}));
 
-app.get('/api/trips/mine',auth,h(async(q,s)=>{const ts=await Trip.find({$or:[{driverId:q.uid},{riders:q.uid}]}).sort('-createdAt').populate('driverId riders','name phone');
+app.get('/api/trips/mine',auth,h(async(q,s)=>{const ts=await Trip.find({$or:[{driverId:q.uid},{riders:q.uid}]}).sort('-createdAt').populate('driverId riders','name phone').lean();
   const rs=await Rating.find({fromUser:q.uid,tripId:{$in:ts.map(t=>t._id)}});
   s.json(ts.map(t=>({...t,rated:rs.filter(r=>String(r.tripId)===String(t._id)).map(r=>String(r.toUser))})));}));
 
