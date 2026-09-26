@@ -3,6 +3,7 @@ import { Alert, Image, Linking, Platform, SafeAreaView, ScrollView, Switch, Text
 import { Picker } from '@react-native-picker/picker';
 import { api, session } from '../api';
 import { C, s, Btn, In, Stars } from '../ui';
+import { DoodleSparkles, RouteDoodle } from '../components/Illustrations';
 import { getCurrentGeneralLocation } from '../utils/location';
 
 const DAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
@@ -19,7 +20,26 @@ export function DetailScreen({ commute, back, need }) {
   const message = `Hi ${commute.user.name}! I found you on PickMe. Are you still going ${commute.origin.name} → ${commute.dest.name} around ${commute.startTime}?`;
   const report = () => need() && api('/api/report', { userId: commute.user._id, reason: 'Reported from ride details' }).then(() => say('Reported. Thanks!')).catch((error) => say(error.message));
   const block = () => need() && api('/api/block', { userId: commute.user._id }).then(() => { say('Blocked.'); back(); }).catch((error) => say(error.message));
-  return <SafeAreaView style={s.fill}><ScrollView contentContainerStyle={s.pad}><Text onPress={back} style={{ fontSize: 22 }}>←</Text><Text style={s.h2}>Ride Details</Text><View style={s.card}><Text style={s.name}>{commute.user.name}{commute.user.verified ? ' ✔ Verified' : ''}</Text><Text style={s.mute}>★ {commute.user.avg || 'New'} · {commute.user.count} ratings</Text><Text style={{ fontSize: 26, fontWeight: '800', marginVertical: 8 }}>{commute.startTime} – {commute.endTime}</Text><Text>🟢 {commute.origin.name}</Text><Text>🔴 {commute.dest.name}</Text><Text style={{ marginTop: 8 }}>📅 {commute.startDate || '-'} → {commute.endDate || '-'} · {commute.days.map((day) => ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][day]).join(', ')}</Text><Text style={{ marginTop: 6 }}>💺 {commute.seats} seats · 💰 Rs. {commute.price}/seat · {commute.score}% match</Text></View><Btn yellow t={sent ? 'Request sent ✓' : 'Request to Join  →'} onPress={join} /><Btn dark t="Chat on WhatsApp  →" onPress={() => wa(commute.user.phone, message)} /><Text style={s.lbl}>Reviews</Text>{profile && profile.reviews.length === 0 && <Text style={s.mute}>No reviews yet.</Text>}{profile && profile.reviews.map((review, index) => <View key={index} style={s.card}><Stars v={review.stars} /><Text>{review.comment || '—'}</Text><Text style={s.mute}>by {review.from || 'rider'}</Text></View>)}<View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}><Btn style={{ flex: 1, backgroundColor: C.lav }} t="Report" onPress={report} /><Btn style={{ flex: 1, backgroundColor: C.red }} t="Block" onPress={block} /></View></ScrollView></SafeAreaView>;
+  return <SafeAreaView style={s.fill}><ScrollView contentContainerStyle={s.pad}>
+    <TouchableOpacity onPress={back} style={s.backLink}><Text style={s.backLinkText}>←  Available rides</Text></TouchableOpacity>
+    <Text style={s.h2}>Ride Details</Text>
+    <View style={s.card}>
+      <View style={s.detailTopRow}><View style={{ flex: 1 }}><Text style={s.name}>{commute.user.name}{commute.user.verified ? '  ✓' : ''}</Text><Text style={s.rideRating}>★ {commute.user.avg || 'New'} <Text style={s.mute}>· {commute.user.count} ratings</Text></Text></View><View style={s.matchBadge}><Text style={s.matchBadgeText}>{commute.score}%</Text><Text style={s.matchBadgeCaption}>match</Text></View></View>
+      <View style={s.detailDeparture}><Text style={s.detailDepartureTime}>{commute.startTime}</Text><Text style={s.mute}>Departure · until {commute.endTime}</Text></View>
+      <View style={s.detailStop}><View style={s.detailOriginPin} /><View style={{ flex: 1 }}><Text style={s.detailStopLabel}>FROM</Text><Text style={s.rideRouteName}>{commute.origin.name}</Text></View></View>
+      <RouteDoodle style={s.detailRouteDoodle} />
+      <View style={s.detailStop}><View style={s.detailDestinationPin} /><View style={{ flex: 1 }}><Text style={s.detailStopLabel}>TO</Text><Text style={s.rideRouteName}>{commute.dest.name}</Text></View></View>
+      <View style={s.detailFacts}><Text style={s.detailFact}>{commute.seats} seats</Text><Text style={s.detailFact}>Rs. {commute.price} / seat</Text></View>
+      <Text style={s.detailSchedule}>{commute.startDate || 'Date flexible'} → {commute.endDate || 'Date flexible'} · {commute.days.map((day) => ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][day]).join(', ')}</Text>
+    </View>
+    {sent && <View style={s.successBanner}><DoodleSparkles style={s.successSparkle} /><View style={{ flex: 1 }}><Text style={s.successTitle}>Request sent</Text><Text style={s.successCopy}>You’re one step closer to sharing this route.</Text><RouteDoodle style={s.successBannerRoute} /></View></View>}
+    <Btn yellow t={sent ? 'Request sent ✓' : 'Request to Join  →'} onPress={join} />
+    <Btn dark t="Chat on WhatsApp  →" onPress={() => wa(commute.user.phone, message)} />
+    <Text style={s.lbl}>Reviews</Text>
+    {profile && profile.reviews.length === 0 && <Text style={s.mute}>No reviews yet.</Text>}
+    {profile && profile.reviews.map((review, index) => <View key={index} style={s.card}><Stars v={review.stars} /><Text>{review.comment || '—'}</Text><Text style={s.mute}>by {review.from || 'rider'}</Text></View>)}
+    <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}><Btn style={{ flex: 1, backgroundColor: C.lav }} t="Report" onPress={report} /><Btn style={{ flex: 1, backgroundColor: C.red }} t="Block" onPress={block} /></View>
+  </ScrollView></SafeAreaView>;
 }
 
 export function RequestsScreen() {
@@ -33,12 +53,27 @@ export function RequestsScreen() {
 }
 
 export function TripsScreen({ me }) {
-  const [trips, setTrips] = useState([]); const load = () => api('/api/trips/mine').then((items) => setTrips((items || []).map((item) => item._doc ? { ...item._doc, rated: item.rated || [] } : item))).catch((error) => say(error.message)); useEffect(() => { load(); }, []);
+  const [trips, setTrips] = useState([]);
+  const load = () => api('/api/trips/mine').then((items) => setTrips((items || []).map((item) => item._doc ? { ...item._doc, rated: item.rated || [] } : item))).catch((error) => say(error.message));
+  useEffect(() => { load(); }, []);
   const rate = (tripId, toUser, stars) => api('/api/ratings', { tripId, toUser, stars }).then(load).catch((error) => say(error.message));
-  return <><Text style={s.h2}>Trips & Ratings</Text>{trips.length === 0 && <Text style={s.mute}>Completed trips show up here.</Text>}{trips.map((trip) => { const people = [trip.driverId, ...(trip.riders || [])].filter((person) => person && String(person._id) !== String(me?._id)); const rated = trip.rated || []; return <View key={trip._id} style={s.card}><Text style={s.name}>{trip.origin?.name || 'Unknown pickup'} → {trip.dest?.name || 'Unknown destination'}</Text><Text style={s.mute}>{trip.createdAt ? new Date(trip.createdAt).toDateString() : 'Recent trip'} · {trip.distanceKm || 0} km</Text><Text style={{ fontSize: 22, fontWeight: '800', marginVertical: 6 }}>Rs. {trip.perPerson || 0} each</Text>{people.map((person) => <View key={person._id} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}><Text>{person.name || 'Participant'}</Text>{rated.includes(String(person._id)) ? <Text style={s.mute}>Rated ✓</Text> : <Stars v={0} set={(stars) => rate(trip._id, person._id, stars)} />}</View>)}</View>; })}</>;
+  return <>
+    <Text style={s.h2}>Trips & Ratings</Text>
+    {trips.length === 0 && <View style={s.emptyState}><RouteDoodle style={s.emptyRouteDoodle} /><Text style={s.name}>Your next shared journey starts here.</Text><Text style={[s.mute, { marginTop: 5 }]}>Completed trips and ratings will appear on this route.</Text></View>}
+    {trips.map((trip) => {
+      const people = [trip.driverId, ...(trip.riders || [])].filter((person) => person && String(person._id) !== String(me?._id));
+      const rated = trip.rated || [];
+      return <View key={trip._id} style={s.card}>
+        <View style={s.tripRouteRow}><Text style={s.tripRouteText} numberOfLines={1}>{trip.origin?.name || 'Unknown pickup'}</Text><Text style={s.tripRouteArrow}>→</Text><Text style={s.tripRouteText} numberOfLines={1}>{trip.dest?.name || 'Unknown destination'}</Text></View>
+        <Text style={s.mute}>{trip.createdAt ? new Date(trip.createdAt).toDateString() : 'Recent trip'} · {trip.distanceKm || 0} km</Text>
+        <Text style={s.tripFare}>Rs. {trip.perPerson || 0} each</Text>
+        {people.map((person) => <View key={person._id} style={s.tripRiderRow}><Text style={s.tripRiderName}>{person.name || 'Participant'}</Text>{rated.includes(String(person._id)) ? <Text style={s.mute}>Rated ✓</Text> : <Stars v={0} set={(stars) => rate(trip._id, person._id, stars)} />}</View>)}
+      </View>;
+    })}
+  </>;
 }
 
-export function ProfileScreen({ me, logout, go, setForm, setMe }) {
+export function ProfileScreen({ me, logout, go, setForm, setMe, notice }) {
   const { width } = useWindowDimensions();
   const userId = me?._id || me?.id;
   const [commutes, setCommutes] = useState([]);
@@ -110,13 +145,14 @@ export function ProfileScreen({ me, logout, go, setForm, setMe }) {
     } catch (saveError) { setError(saveError.message || 'Unable to save vehicle.'); }
     finally { setSaving(false); }
   };
-  if (loading) return <View style={s.profileContainer}><Text style={s.h2}>Profile</Text><Text style={s.mute}>Loading profile...</Text></View>;
-  if (error && !profile) return <View style={s.profileContainer}><Text style={s.h2}>Profile</Text><Text style={s.authError}>{error}</Text><Btn yellow t="Try again" onPress={load} /></View>;
+  if (loading) return <View style={s.profileContainer}><Text style={s.h2}>Profile</Text><RouteDoodle repeat style={s.loadingRoute} /><Text style={s.mute}>Finding your profile details…</Text></View>;
+  if (error && !profile) return <View style={s.profileContainer}><Text style={s.h2}>Profile</Text><DoodleSparkles style={s.noticeSparkle} /><Text style={s.authError}>{error}</Text><Text style={s.locationNotice}>The road disappeared for a moment. Check your connection and try again.</Text><Btn yellow t="Try again" onPress={load} /></View>;
   const initials = (user.name || 'P').split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase();
   const rating = profile?.rating || { average: 0, count: 0 };
   const primaryOccupancy = commutes.length ? occupancy[commutes[0]._id] : null;
   return <View style={[s.profileContainer, { maxWidth: width >= 700 ? 780 : 780 }]}>
     <View style={s.profileHeader}><View style={s.profileAvatar}>{user.profileImage ? <Image source={{ uri: user.profileImage }} style={s.profileAvatarImage} /> : <Text style={s.profileAvatarText}>{initials}</Text>}</View><View style={s.profileIdentity}><Text style={s.h2}>{user.name || 'Name not available'}</Text><Text style={s.mute}>{user.email || 'Email not available'}</Text><Text style={s.mute}>{user.phone || 'Phone not available'}</Text></View><TouchableOpacity onPress={startProfileEdit}><Text style={s.profileLink}>Edit profile</Text></TouchableOpacity></View>
+    {!!notice && <View style={s.successBanner}><DoodleSparkles style={s.successSparkle} /><View style={{ flex: 1 }}><Text style={s.successTitle}>{notice}</Text><Text style={s.successCopy}>Your commute is ready for the PickMe community.</Text><RouteDoodle style={s.successBannerRoute} /></View></View>}
     {!!error && <Text style={s.authError}>{error}</Text>}
     {editingProfile ? <View style={s.card}><Text style={s.sectionTitle}>Personal information</Text><Text style={s.authLabel}>Full Name *</Text><In value={profileDraft.name} onChangeText={(value) => setProfileField('name', value)} /><Text style={s.authLabel}>Email *</Text><In value={profileDraft.email} autoCapitalize="none" keyboardType="email-address" onChangeText={(value) => setProfileField('email', value)} /><Text style={s.authLabel}>Phone Number</Text><In value={profileDraft.phone} keyboardType="phone-pad" onChangeText={(value) => setProfileField('phone', value)} /><Text style={s.authLabel}>Gender *</Text><View style={s.selectWrap}><Picker selectedValue={profileDraft.gender} onValueChange={(value) => setProfileField('gender', value)} style={s.genderPicker}><Picker.Item label="Select gender" value="" /><Picker.Item label="Female" value="Female" /><Picker.Item label="Male" value="Male" /><Picker.Item label="Non-binary" value="Non-binary" /><Picker.Item label="Prefer not to say" value="Prefer not to say" /></Picker></View><Text style={s.authLabel}>Current/general location</Text><In value={profileDraft.city} editable={false} placeholder="Location not available" /><TouchableOpacity onPress={chooseLocation} disabled={locationStatus === 'loading'}><Text style={s.profileLink}>{locationStatus === 'loading' ? 'Getting current location...' : 'Use my current location'}</Text></TouchableOpacity>{!!locationError && <Text style={s.authError}>{locationError}</Text>}<View style={s.profileButtonRow}><Btn small outline t="Cancel" onPress={() => setEditingProfile(false)} /><Btn small yellow t={saving ? 'Saving...' : 'Save profile'} disabled={saving} onPress={saveProfile} /></View></View> : <View style={s.card}><Text style={s.sectionTitle}>Personal information</Text><Text style={s.profileValueLabel}>Gender</Text><Text style={s.profileValue}>{user.gender || 'Gender not available'}</Text><Text style={s.profileValueLabel}>Current/general location</Text><Text style={s.profileValue}>{user.city || 'Location not available'}</Text></View>}
     <View style={s.card}><Text style={s.sectionTitle}>Rating</Text>{rating.count > 0 ? <View style={s.ratingRow}><Text style={s.ratingNumber}>★ {rating.average}</Text><Text style={s.mute}>{rating.count} ratings</Text></View> : <Text style={s.mute}>No ratings yet</Text>}{profile?.reviews?.slice(0, 3).map((review, index) => <View key={index} style={s.reviewRow}><Text style={s.name}>{review.from || 'PickMe user'} · {review.stars}/5</Text>{review.comment && <Text style={s.mute}>{review.comment}</Text>}</View>)}</View>

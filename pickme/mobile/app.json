@@ -4,10 +4,10 @@
     "slug": "pickme",
     "version": "1.0.0",
     "orientation": "portrait",
-    "backgroundColor": "#FFF8E7",
+    "backgroundColor": "#FFF9E9",
     "newArchEnabled": true,
     "splash": {
-      "backgroundColor": "#FFD93D",
+      "backgroundColor": "#FFD84D",
       "resizeMode": "contain"
     },
     "android": {

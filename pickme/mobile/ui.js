@@ -1,31 +1,31 @@
-import React from 'react';
-import { Text, TextInput, TouchableOpacity, StyleSheet, Platform, View, SafeAreaView, Alert } from 'react-native';
+import React, { useRef } from 'react';
+import { Animated, Text, TextInput, TouchableOpacity, StyleSheet, Platform, View, SafeAreaView, Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 
 export const C = {
-  primary: '#FFD93D',
-  primaryDark: '#F5B800',
-  secondary: '#5B4BFF',
-  secondaryDark: '#4361EE',
-  accent: '#FF6B6B',
-  background: '#FFF8E7',
+  primary: '#FFD84D',
+  primaryDark: '#EFBF24',
+  secondary: '#4054E8',
+  secondaryDark: '#3044CF',
+  accent: '#FF705B',
+  background: '#FFF9E9',
   card: '#FFFFFF',
   cardAlt: '#FFFDF7',
-  text: '#1A1A2E',
-  textSecondary: '#6B6B82',
-  textTertiary: '#9A9AC1',
-  border: '#F0E9D7',
-  borderDark: '#E0D4BB',
-  success: '#27AE60',
+  text: '#17233E',
+  textSecondary: '#6F7180',
+  textTertiary: '#9698A4',
+  border: '#EFE8D8',
+  borderDark: '#DED5C4',
+  success: '#318B68',
   error: '#E5484D',
   warning: '#F2C94A',
   shadow: '#000000',
   overlay: 'rgba(0,0,0,0.4)',
-  y: '#FFD93D', cream: '#FFF8E7', blue: '#4F46E5', ink: '#1B1B2F',
-  mute: '#8A8570', lav: '#E4DCFF', mint: '#D6F5E3', red: '#E5484D',
-  gradient: ['#FFD93D', '#FFB244'],
-  darkGradient: ['#1A1A2E', '#16213E'],
+  y: '#FFD84D', cream: '#FFF9E9', blue: '#4054E8', ink: '#17233E',
+  mute: '#77766F', lav: '#E8E2FF', mint: '#DDF2E8', red: '#E5484D',
+  gradient: ['#FFE879', '#FFD84D'],
+  darkGradient: ['#17233E', '#263656'],
 };
 
 const isWeb = Platform.OS === 'web';
@@ -46,7 +46,7 @@ export const GradientCard = ({ children, style, colors = C.gradient, dark }) =>
 
 export const Card = ({ children, style, dark, pressable, onPress, bordered }) => (
   <TouchableOpacity
-    activeOpacity={pressable ? 0.8 : 1}
+    activeOpacity={pressable ? 0.84 : 1}
     onPress={onPress}
     style={[
       styles.card,
@@ -60,11 +60,18 @@ export const Card = ({ children, style, dark, pressable, onPress, bordered }) =>
   </TouchableOpacity>
 );
 
+const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);
+
 export const Btn = ({
   t, onPress, dark, yellow, blue, red, outline, disabled, style, textStyle, small,
-}) => (
-  <TouchableOpacity
+}) => {
+  const scale = useRef(new Animated.Value(1)).current;
+  const animateScale = (toValue) => Animated.spring(scale, { toValue, speed: 28, bounciness: 4, useNativeDriver: true }).start();
+  return <AnimatedTouchable
     onPress={onPress}
+    onPressIn={() => !disabled && animateScale(0.97)}
+    onPressOut={() => animateScale(1)}
+    activeOpacity={0.92}
     disabled={disabled}
     style={[
       styles.btn,
@@ -75,6 +82,7 @@ export const Btn = ({
       },
       small && { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 12 },
       style,
+      { transform: [{ scale }] },
     ]}
   >
     <Text
@@ -86,8 +94,8 @@ export const Btn = ({
     >
       {t}
     </Text>
-  </TouchableOpacity>
-);
+  </AnimatedTouchable>;
+};
 
 export const In = (p) => (
   <TextInput
@@ -281,7 +289,7 @@ export const Loading = ({ text = 'Searching for rides...' }) => (
 
 export const s = StyleSheet.create({
   fill: { flex: 1, backgroundColor: C.background },
-  paper: { backgroundColor: '#FFF8E7' },
+  paper: { backgroundColor: C.cream },
   pad: { padding: 16, paddingBottom: 112, backgroundColor: C.background },
   padScroll: { padding: 16, paddingBottom: 100, backgroundColor: C.background },
   container: { flex: 1 },
@@ -290,8 +298,10 @@ export const s = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
-    boxShadow: '0px 2px 5px rgba(0,0,0,0.04)',
-    elevation: 1,
+    borderWidth: 1,
+    borderColor: C.border,
+    boxShadow: '0px 5px 14px rgba(23,35,62,0.07)',
+    elevation: 2,
   },
   statCard: {
     backgroundColor: C.card,
@@ -312,26 +322,28 @@ export const s = StyleSheet.create({
     backgroundColor: C.card,
   },
   btn: {
-    padding: 16,
-    borderRadius: 24,
+    paddingVertical: 15,
+    paddingHorizontal: 20,
+    borderRadius: 18,
     alignItems: 'center',
     marginVertical: 10,
-    boxShadow: '0px 4px 8px rgba(0,0,0,0.12)',
-    elevation: 3,
+    boxShadow: '0px 4px 8px rgba(23,35,62,0.14)',
+    elevation: 2,
   },
-  btnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  btnText: { color: '#fff', fontWeight: '700', fontSize: 16, fontFamily: 'DMSans_700Bold' },
   input: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
+    backgroundColor: '#FFFEFA',
+    borderRadius: 14,
     padding: 13,
     marginVertical: 5,
     borderWidth: 1,
     borderColor: C.border,
     color: C.text,
     fontSize: 15,
+    fontFamily: 'DMSans_400Regular',
   },
-  label: { fontWeight: '700', marginBottom: 2, color: C.ink, fontSize: 14 },
-  name: { fontSize: 17, fontWeight: '700', color: C.ink },
+  label: { fontWeight: '700', marginBottom: 2, color: C.ink, fontSize: 14, fontFamily: 'DMSans_700Bold' },
+  name: { fontSize: 17, fontWeight: '700', color: C.ink, fontFamily: 'DMSans_700Bold' },
   badge: {
     backgroundColor: C.primary,
     paddingHorizontal: 10,
@@ -343,7 +355,7 @@ export const s = StyleSheet.create({
   },
   badgeText: { color: C.ink, fontSize: 12, fontWeight: '700' },
   pill: { backgroundColor: C.lav, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, overflow: 'hidden', marginRight: 8 },
-  lbl: { color: C.ink, fontSize: 12, fontWeight: '800', marginTop: 14, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.7 },
+  lbl: { color: C.ink, fontSize: 12, fontWeight: '800', marginTop: 14, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.7, fontFamily: 'DMSans_700Bold' },
   day: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: C.border, alignItems: 'center', justifyContent: 'center' },
   chip: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: C.border, marginRight: 8 },
   scheduleField: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderColor: C.border, minHeight: 48, paddingHorizontal: 12, marginVertical: 5 },
@@ -374,26 +386,26 @@ export const s = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: C.cream,
     borderRadius: 0,
     borderTopWidth: 1,
-    borderColor: '#EEE6D5',
+    borderColor: C.border,
     boxShadow: '0px -2px 8px rgba(0,0,0,0.06)',
     elevation: 6,
     zIndex: 10,
   },
   tabButton: { flex: 1, height: 58, alignItems: 'center', justifyContent: 'center', gap: 2 },
   tabIcon: { height: 30, textAlign: 'center' },
-  tabLabel: { fontSize: 10, fontWeight: '700' },
+  tabLabel: { fontSize: 10, fontWeight: '700', fontFamily: 'DMSans_700Bold' },
   addTab: { flex: 0, width: 52, height: 52, marginHorizontal: 4, borderRadius: 26, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: C.border },
-  addTabActive: { flex: 0, width: 52, height: 52, marginHorizontal: 4, borderRadius: 26, backgroundColor: C.primary, borderWidth: 3, borderColor: '#FFF8E7' },
+  addTabActive: { flex: 0, width: 52, height: 52, marginHorizontal: 4, borderRadius: 26, backgroundColor: C.primary, borderWidth: 3, borderColor: C.cream },
   addTabLabel: { color: '#fff' },
-  h1: { fontSize: 30, fontWeight: '800', color: C.ink, marginBottom: 8 },
-  h2: { fontSize: 24, fontWeight: '800', color: C.ink, marginBottom: 4 },
-  h3: { fontSize: 18, fontWeight: '700', color: C.ink, marginBottom: 4 },
-  mute: { color: C.textSecondary },
+  h1: { fontSize: 30, fontWeight: '800', color: C.ink, marginBottom: 8, fontFamily: 'Fredoka_600SemiBold' },
+  h2: { fontSize: 24, fontWeight: '800', color: C.ink, marginBottom: 4, fontFamily: 'Fredoka_600SemiBold' },
+  h3: { fontSize: 18, fontWeight: '700', color: C.ink, marginBottom: 4, fontFamily: 'Fredoka_600SemiBold' },
+  mute: { color: C.textSecondary, fontFamily: 'DMSans_400Regular' },
   section: { marginTop: 24, marginBottom: 8 },
-  sectionTitle: { fontSize: 16, fontWeight: '700', color: C.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: C.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5, fontFamily: 'DMSans_700Bold' },
   divider: { height: 1, backgroundColor: C.border, marginVertical: 12 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', fontSize: 20 },
@@ -405,14 +417,111 @@ export const s = StyleSheet.create({
   splashCar: { fontSize: 74, marginTop: 30 },
   splashIllustration: { marginTop: 24 },
   splashHint: { color: C.ink, fontSize: 13, fontWeight: '700', marginTop: 34, letterSpacing: 0.4 },
-  homeIntro: { backgroundColor: C.y, borderRadius: 12, padding: 20, marginBottom: 14, borderBottomRightRadius: 34 },
-  eyebrow: { color: C.blue, fontSize: 11, fontWeight: '800', letterSpacing: 1.3, marginBottom: 8 },
-  introText: { color: C.ink, fontSize: 15, lineHeight: 22, maxWidth: 340 },
-  formTitle: { color: C.ink, fontSize: 18, fontWeight: '900', marginTop: 6, marginBottom: 2 },
+  mainShell: { flex: 1 },
+  searchLoading: { backgroundColor: C.cream, justifyContent: 'center', alignItems: 'center', padding: 24 },
+  loadingSparkles: { marginBottom: 14 },
+  loadingRoute: { width: '100%', maxWidth: 340, marginTop: 26, marginBottom: 18 },
+  homeIntro: { backgroundColor: C.y, borderRadius: 22, padding: 20, marginBottom: 14, borderBottomRightRadius: 40, overflow: 'hidden' },
+  homeTitle: { color: C.ink, fontSize: 34, lineHeight: 39, fontWeight: '900', maxWidth: 320, marginBottom: 8, fontFamily: 'Fredoka_600SemiBold' },
+  homeRouteDoodle: { height: 94, marginTop: 2, marginBottom: -7 },
+  postIntro: { backgroundColor: C.lav, borderRadius: 22, padding: 20, marginBottom: 14, borderBottomRightRadius: 38, overflow: 'hidden' },
+  postRouteDoodle: { height: 82, marginTop: 4, marginBottom: -4 },
+  homeActions: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+  homeActionButton: { flex: 1, paddingHorizontal: 10, minHeight: 50 },
+  inlineNotice: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#FFF0EC', borderWidth: 1, borderColor: '#FFD1C8', borderRadius: 12, padding: 10, marginVertical: 8 },
+  noticeSparkle: { width: 30, height: 28 },
+  noticeText: { color: C.ink, fontSize: 13, fontWeight: '600', flex: 1, lineHeight: 18 },
+  suggestedRouteList: { gap: 10, paddingVertical: 3, paddingRight: 16 },
+  suggestedRouteCard: { width: 142, minHeight: 94, borderRadius: 14, padding: 12, backgroundColor: C.card, borderWidth: 1, borderColor: C.border, boxShadow: '0px 4px 10px rgba(23,35,62,0.06)', elevation: 1 },
+  suggestedRouteEyebrow: { color: C.blue, fontSize: 9, fontWeight: '900', marginBottom: 6 },
+  suggestedRouteText: { color: C.ink, fontSize: 13, fontWeight: '800' },
+  suggestedRouteArrow: { color: C.accent, fontSize: 13, lineHeight: 16, marginLeft: 2 },
+  emptyState: { alignItems: 'center', paddingVertical: 22, paddingHorizontal: 18 },
+  emptyRouteDoodle: { height: 90, marginBottom: 8 },
+  matchBadge: { width: 56, height: 52, borderRadius: 14, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '3deg' }] },
+  matchBadgeText: { color: C.ink, fontSize: 15, lineHeight: 18, fontWeight: '900' },
+  matchBadgeCaption: { color: C.ink, fontSize: 9, fontWeight: '800' },
+  detailTopRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  detailDeparture: { flexDirection: 'row', alignItems: 'baseline', gap: 10, paddingVertical: 12, marginTop: 12, borderTopWidth: 1, borderBottomWidth: 1, borderColor: C.border },
+  detailDepartureTime: { color: C.ink, fontSize: 25, fontWeight: '900' },
+  detailStop: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 13 },
+  detailOriginPin: { width: 13, height: 13, borderRadius: 7, backgroundColor: C.blue, borderWidth: 2, borderColor: C.lav },
+  detailDestinationPin: { width: 13, height: 13, borderRadius: 7, backgroundColor: C.accent, borderWidth: 2, borderColor: '#FFE4DD' },
+  detailStopLabel: { color: C.mute, fontSize: 9, fontWeight: '900', marginBottom: 2 },
+  detailRouteDoodle: { height: 72, marginVertical: 0 },
+  detailFacts: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 },
+  detailFact: { color: C.ink, fontSize: 12, fontWeight: '800', backgroundColor: C.lav, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 12, overflow: 'hidden' },
+  detailSchedule: { color: C.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 10 },
+  successBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 14, backgroundColor: C.mint, padding: 12, marginTop: 4, borderWidth: 1, borderColor: '#C5E8D5' },
+  successSparkle: { width: 54, height: 46 },
+  successBannerRoute: { height: 48, marginTop: 0, marginBottom: -4 },
+  successTitle: { color: C.ink, fontSize: 15, fontWeight: '900' },
+  successCopy: { color: C.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 2 },
+  tripRouteRow: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 5 },
+  tripRouteText: { flex: 1, flexShrink: 1, color: C.ink, fontSize: 15, fontWeight: '800', fontFamily: 'DMSans_700Bold' },
+  tripRouteArrow: { color: C.accent, fontSize: 19, fontWeight: '900' },
+  tripFare: { color: C.ink, fontSize: 21, fontWeight: '900', marginVertical: 7, fontFamily: 'Fredoka_600SemiBold' },
+  tripRiderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6, borderTopWidth: 1, borderTopColor: C.border, paddingTop: 8, marginTop: 6 },
+  tripRiderName: { color: C.ink, fontSize: 13, fontWeight: '700', fontFamily: 'DMSans_700Bold' },
+  eyebrow: { color: C.blue, fontSize: 11, fontWeight: '800', letterSpacing: 1.3, marginBottom: 8, fontFamily: 'DMSans_700Bold' },
+  introText: { color: C.ink, fontSize: 15, lineHeight: 22, maxWidth: 340, fontFamily: 'DMSans_400Regular' },
+  heroDoodle: { height: 22, width: 150, flexDirection: 'row', alignItems: 'center', marginTop: 14, transform: [{ rotate: '-4deg' }] },
+  heroDoodleDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: C.blue },
+  heroDoodleLine: { width: 60, borderTopWidth: 2, borderStyle: 'dashed', borderColor: C.ink, marginHorizontal: 5 },
+  heroDoodleCar: { color: C.ink, fontSize: 18, fontWeight: '900', marginRight: 5 },
+  heroDoodleDotEnd: { width: 10, height: 10, borderRadius: 5, backgroundColor: C.accent },
+  routeDoodle: { height: 82, width: '100%', position: 'relative', overflow: 'hidden', marginVertical: 6 },
+  routeDoodleCurve: { position: 'absolute', left: 18, right: 24, top: 25, height: 40, borderBottomWidth: 2, borderBottomColor: C.ink, borderBottomStyle: 'dashed', borderBottomLeftRadius: 30, borderBottomRightRadius: 48, transform: [{ rotate: '-4deg' }] },
+  routeDoodleTrack: { position: 'absolute', left: 22, right: 22, top: 45, borderTopWidth: 1, borderStyle: 'dashed', borderColor: C.blue, opacity: 0.7 },
+  routeDoodleStart: { position: 'absolute', left: 16, top: 40, width: 12, height: 12, borderRadius: 7, backgroundColor: C.blue, borderWidth: 2, borderColor: '#fff' },
+  routeDoodleEnd: { position: 'absolute', right: 16, top: 40, width: 12, height: 12, borderRadius: 7, backgroundColor: C.accent, borderWidth: 2, borderColor: '#fff' },
+  routeDoodleSparkLeft: { position: 'absolute', top: 4, left: 42, color: C.blue, fontSize: 15 },
+  routeDoodleSparkRight: { position: 'absolute', top: 10, right: 54, color: C.accent, fontSize: 17 },
+  routeCarMover: { position: 'absolute', top: -40, left: -84, width: 250, height: 170 },
+  routeCarScale: { width: 250, height: 170, transform: [{ scale: 0.31 }] },
+  routeCarScene: { width: 250, height: 170 },
+  sparkleBurst: { width: 72, height: 58, position: 'relative', alignItems: 'center', justifyContent: 'center' },
+  sparkleMain: { color: C.primaryDark, fontSize: 38, fontWeight: '900' },
+  sparkleSmall: { position: 'absolute', top: 2, right: 7, color: C.blue, fontSize: 18 },
+  sparkleDot: { position: 'absolute', bottom: 1, left: 7, color: C.accent, fontSize: 18 },
+  backLink: { alignSelf: 'flex-start', paddingVertical: 8, paddingRight: 12, marginBottom: 8 },
+  backLinkText: { color: C.blue, fontSize: 14, fontWeight: '800' },
+  rideCard: { backgroundColor: C.card, borderRadius: 12, borderWidth: 1, borderColor: C.border, padding: 15, marginBottom: 12, boxShadow: '0px 5px 14px rgba(23,35,62,0.07)', elevation: 2 },
+  rideCardTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  rideAvatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: C.lav },
+  rideAvatarText: { color: C.blue, fontSize: 18, fontWeight: '900' },
+  rideRating: { color: C.ink, fontSize: 12, fontWeight: '700', marginTop: 3 },
+  rideRoute: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, marginVertical: 10, borderTopWidth: 1, borderBottomWidth: 1, borderColor: C.border },
+  rideRouteTrack: { width: 16, alignItems: 'center', marginRight: 10 },
+  rideRouteDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: C.blue },
+  rideRouteStem: { width: 2, height: 20, borderLeftWidth: 2, borderStyle: 'dashed', borderColor: C.primaryDark },
+  routeDirectionMark: { position: 'absolute', top: 16, color: C.accent, fontSize: 10, fontWeight: '900', backgroundColor: C.card },
+  rideRouteDotEnd: { backgroundColor: C.accent },
+  rideRouteName: { color: C.ink, fontSize: 14, fontWeight: '700', fontFamily: 'DMSans_700Bold' },
+  rideTime: { alignItems: 'flex-end', marginLeft: 8 },
+  rideTimeText: { color: C.ink, fontSize: 15, fontWeight: '900' },
+  rideTimeCaption: { color: C.mute, fontSize: 10, marginTop: 2 },
+  rideCardFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  rideMeta: { color: C.textSecondary, fontSize: 12, fontWeight: '600', flexShrink: 1 },
+  ridePrice: { color: C.ink, fontSize: 16, fontWeight: '900' },
+  ridePriceUnit: { color: C.mute, fontSize: 11, fontWeight: '600' },
+  formTitle: { color: C.ink, fontSize: 18, fontWeight: '900', marginTop: 6, marginBottom: 2, fontFamily: 'Fredoka_600SemiBold' },
+  routeFieldBlock: { marginBottom: 2 },
+  routeFieldLabel: { color: C.blue, fontSize: 10, fontWeight: '900', marginTop: 8, marginBottom: 1 },
   routeInputRow: { flexDirection: 'row', alignItems: 'center' },
   routeDot: { width: 11, height: 11, borderRadius: 6, marginHorizontal: 8 },
   routeInput: { flex: 1 },
-  mapFrame: { height: 220, borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: '#EADFC5', marginTop: 8 },
+  currentLocationButton: { minHeight: 34, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 10, borderRadius: 17, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: C.border, marginLeft: 25, marginTop: 2 },
+  currentLocationIcon: { width: 16, height: 16, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: C.lav },
+  currentLocationIconText: { color: C.blue, fontSize: 11, lineHeight: 14, fontWeight: '900' },
+  currentLocationText: { color: C.blue, fontSize: 11, fontWeight: '800' },
+  locationNotice: { color: C.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 5, marginHorizontal: 4 },
+  locationNoticeError: { color: C.red },
+  locationSuggestion: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 10, backgroundColor: C.card, borderBottomWidth: 1, borderBottomColor: C.border },
+  locationSuggestionPin: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: C.lav },
+  locationSuggestionText: { color: C.ink, fontSize: 13, fontWeight: '600', flex: 1 },
+  mapCaption: { color: C.textSecondary, fontSize: 12, fontWeight: '600', marginTop: 9 },
+  mapFrame: { height: 220, borderRadius: 18, overflow: 'hidden', borderWidth: 1, borderColor: '#EADFC5', marginTop: 6 },
   authPad: { padding: 22, paddingBottom: 80, backgroundColor: C.background, alignItems: 'center' },
   authPanel: { width: '100%', alignSelf: 'center' },
   authBrand: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 22 },
@@ -441,7 +550,7 @@ export const s = StyleSheet.create({
   locationControl: { marginBottom: 2 },
   locationRetry: { color: C.blue, fontSize: 13, fontWeight: '800', marginTop: 2 },
   profileContainer: { width: '100%', alignSelf: 'center', paddingBottom: 24 },
-  profileHeader: { backgroundColor: C.y, borderRadius: 12, padding: 18, marginBottom: 12, flexDirection: 'row', alignItems: 'center', gap: 14 },
+  profileHeader: { backgroundColor: C.y, borderRadius: 22, padding: 18, marginBottom: 12, flexDirection: 'row', alignItems: 'center', gap: 14 },
   profileAvatar: { width: 76, height: 76, borderRadius: 38, backgroundColor: C.ink, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   profileAvatarImage: { width: '100%', height: '100%' },
   profileAvatarText: { color: '#fff', fontSize: 24, fontWeight: '900' },
@@ -468,7 +577,7 @@ export const s = StyleSheet.create({
   seatGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 8 },
   seat: { minWidth: 68, paddingVertical: 8, paddingHorizontal: 6, borderRadius: 10, borderWidth: 1, alignItems: 'center' },
   seatOpen: { backgroundColor: C.mint, borderColor: C.success },
-  seatOccupied: { backgroundColor: '#FFE1D9', borderColor: C.red },
+  seatOccupied: { backgroundColor: '#FFE4DD', borderColor: C.accent },
   seatNumber: { color: C.ink, fontWeight: '900' },
   seatStatus: { color: C.ink, fontSize: 9, fontWeight: '800', marginTop: 2 },
   doodleStar: { position: 'absolute', top: 90, right: 32, color: C.blue, fontSize: 32 },
@@ -499,7 +608,7 @@ export const s = StyleSheet.create({
   carBumper: { position: 'absolute', right: -5, bottom: 10, width: 18, height: 12, borderRadius: 7, backgroundColor: '#EBAE18', borderWidth: 2, borderColor: C.ink },
   carHeadlight: { position: 'absolute', right: 12, top: 21, width: 13, height: 13, borderRadius: 7, backgroundColor: '#FFF4B0', borderWidth: 2, borderColor: C.ink },
   carStripe: { position: 'absolute', left: 18, right: 22, bottom: 21, height: 5, backgroundColor: '#EAAE1A', borderRadius: 3 },
-  carWheel: { position: 'absolute', bottom: 29, width: 36, height: 36, borderRadius: 20, backgroundColor: C.ink, borderWidth: 3, borderColor: '#FFF8E7', alignItems: 'center', justifyContent: 'center' },
+  carWheel: { position: 'absolute', bottom: 29, width: 36, height: 36, borderRadius: 20, backgroundColor: C.ink, borderWidth: 3, borderColor: C.cream, alignItems: 'center', justifyContent: 'center' },
   carWheelFront: { right: 29 },
   carWheelBack: { left: 29 },
   carHub: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#D5C9A8', borderWidth: 2, borderColor: C.ink },
