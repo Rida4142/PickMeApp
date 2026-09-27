@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import { KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import { C, s, Btn, In } from '../ui';
 import { api } from '../api';
@@ -20,7 +20,6 @@ export default function AuthScreen({ onDone, back, say }) {
   const [errors, setErrors] = useState({});
   const [locationStatus, setLocationStatus] = useState('idle');
   const [locationError, setLocationError] = useState('');
-  const { width } = useWindowDimensions();
   const set = (key) => (value) => {
     setValues((current) => ({ ...current, [key]: value }));
     setErrors((current) => ({ ...current, [key]: '' }));
@@ -69,7 +68,7 @@ export default function AuthScreen({ onDone, back, say }) {
   };
   const toggleMode = () => { setRegistering((current) => !current); setValues(initialValues); setErrors({}); setLocationStatus('idle'); setLocationError(''); };
 
-  return <SafeAreaView style={s.fill}><KeyboardAvoidingView style={s.fill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><ScrollView contentContainerStyle={[s.authPad, { flexGrow: 1 }]} keyboardShouldPersistTaps="handled"><View style={[s.authPanel, { maxWidth: width >= 700 ? 560 : 560 }]}><View style={s.authBrand}><Text style={s.authLogo}>PickMe</Text><Text style={s.authDot}>✦</Text></View>{back && <Text onPress={back} style={s.backButton}>←</Text>}<Text style={s.h1}>{registering ? 'Create your account' : 'Welcome back'}</Text><Text style={s.mute}>{registering ? "Let's get you on the road!" : 'Log in to find your people and share the journey.'}</Text>
+  return <SafeAreaView style={s.fill}><KeyboardAvoidingView style={s.fill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><ScrollView contentContainerStyle={[s.authPad, { flexGrow: 1 }]} keyboardShouldPersistTaps="handled"><View style={s.authPanel}><View style={s.authBrand}><Text style={s.authLogo}>PickMe</Text><Text style={s.authDot}>✦</Text></View>{back && <Text onPress={back} style={s.backButton}>←</Text>}<Text style={s.h1}>{registering ? 'Create your account' : 'Welcome back'}</Text><Text style={s.mute}>{registering ? "Let's get you on the road!" : 'Log in to find your people and share the journey.'}</Text>
     {!registering && <><TouchableOpacity style={s.socialButton} onPress={() => say('Google sign-in is not connected in this prototype.')}><Text style={s.socialIcon}>G</Text><Text style={s.socialText}>Continue with Google</Text></TouchableOpacity><TouchableOpacity style={s.socialButton} onPress={() => say('Apple sign-in is not connected in this prototype.')}><Text style={s.socialIcon}>●</Text><Text style={s.socialText}>Continue with Apple</Text></TouchableOpacity><View style={s.authDivider}><View style={s.dividerLine} /><Text style={s.orText}>or</Text><View style={s.dividerLine} /></View></>}
     {registering && <Field label="Full Name" required error={errors.name}><In placeholder="Your full name" value={values.name} onChangeText={set('name')} /></Field>}
     {registering && <Field label="Email" required error={errors.email}><In placeholder="you@example.com" autoCapitalize="none" keyboardType="email-address" value={values.email} onChangeText={set('email')} /></Field>}

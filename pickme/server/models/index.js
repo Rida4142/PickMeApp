@@ -13,6 +13,7 @@ const User = model('User', new Schema({
   cnic: String,
   password: String,
   profileImage: { type: String, default: null },
+  profileImagePublicId: { type: String, default: null, select: false },
   verified: { type: Boolean, default: false },
   gender: { type: String, required: true, trim: true },
   city: String,
@@ -20,6 +21,14 @@ const User = model('User', new Schema({
     publicLabel: String,
     privateCoordinates: { lat: Number, lng: Number },
     capturedAt: Date,
+  },
+  privacy: {
+    name: { type: String, enum: ['visible', 'contact-only', 'hidden'], default: 'visible' },
+    profileImage: { type: String, enum: ['visible', 'contact-only', 'hidden'], default: 'visible' },
+    location: { type: String, enum: ['visible', 'contact-only', 'hidden'], default: 'visible' },
+    email: { type: String, enum: ['visible', 'contact-only', 'hidden'], default: 'contact-only' },
+    phone: { type: String, enum: ['visible', 'contact-only', 'hidden'], default: 'contact-only' },
+    gender: { type: String, enum: ['visible', 'contact-only', 'hidden'], default: 'visible' },
   },
   vehicle: new Schema({
     make: String,
@@ -56,7 +65,8 @@ const Commute = model('Commute', new Schema({
 
 const SavedLocation = model('SavedLocation', new Schema({
   userId: { type: ID, ref: 'User' }, label: String, name: String,
-  lat: Number, lng: Number, type: String,
+  lat: Number, lng: Number,
+  type: { type: String, enum: ['Home', 'University', 'Work', 'Other'], default: 'Other' },
 }, timestamps));
 
 const Notification = model('Notification', new Schema({

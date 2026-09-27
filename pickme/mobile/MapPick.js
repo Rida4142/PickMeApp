@@ -15,16 +15,22 @@ m.on('click',function(e){var x=JSON.stringify({lat:e.latlng.lat,lng:e.latlng.lng
 </script></body></html>`;
 export default function RoutePicker({o,d,setO,setD}){
  const [act,setAct]=useState(o?'d':'o'),[q,setQ]=useState({o:o?.name||'',d:d?.name||''}),[opts,setOpts]=useState([]),t=useRef();
+ const [savedLocations,setSavedLocations]=useState([]);
+ const [savedLocationState,setSavedLocationState]=useState('loading');
  const [locationState,setLocationState]=useState({status:'idle',message:''});
+ const [searchState,setSearchState]=useState({field:'',status:'idle'});
  const [locationBusy,setLocationBusy]=useState('');
  const [approximateLocationName,setApproximateLocationName]=useState('');
+ const searchSequence=useRef(0);
  const originPin=useRef(new Animated.Value(1)).current,destinationPin=useRef(new Animated.Value(1)).current;
+ useEffect(()=>{let mounted=true;const load=async()=>{setSavedLocationState('loading');try{const items=await api('/api/locations');if(!Array.isArray(items))throw new Error();if(mounted){setSavedLocations(items);setSavedLocationState(items.length?'ready':'empty')}}catch{if(mounted){setSavedLocations([]);setSavedLocationState('error')}}};load();return()=>{mounted=false}},[]);
+ const retrySavedLocations=async()=>{setSavedLocationState('loading');try{const items=await api('/api/locations');if(!Array.isArray(items))throw new Error();setSavedLocations(items);setSavedLocationState(items.length?'ready':'empty')}catch{setSavedLocations([]);setSavedLocationState('error')}};
  const animatePin=key=>{const pin=key==='o'?originPin:destinationPin;pin.setValue(0.62);Animated.spring(pin,{toValue:1,speed:22,bounciness:8,useNativeDriver:true}).start()};
  useEffect(()=>{setQ({o:o?.name||'',d:d?.name||''});if(approximateLocationName&&o?.name!==approximateLocationName&&d?.name!==approximateLocationName){setLocationState({status:'idle',message:''});setApproximateLocationName('')}},[o?.name,d?.name,approximateLocationName]);
  useEffect(()=>{if(o)animatePin('o');if(d)animatePin('d')},[o?.lat,o?.lng,d?.lat,d?.lng]);
- const choose=p=>{(act==='o'?setO:setD)(p);setQ(x=>({...x,[act]:p.name}));setOpts([]);setLocationState({status:'idle',message:''});setApproximateLocationName('');if(act==='o')setAct('d')};
+ const choose=p=>{searchSequence.current+=1;clearTimeout(t.current);(act==='o'?setO:setD)(p);setQ(x=>({...x,[act]:p.name}));setOpts([]);setLocationState({status:'idle',message:''});setSearchState({field:act,status:'idle'});setApproximateLocationName('');if(act==='o')setAct('d')};
  const useCurrentLocation=async key=>{
-   setAct(key);setLocationBusy(key);setLocationState({status:'loading',message:''});
+   searchSequence.current+=1;clearTimeout(t.current);setAct(key);setLocationBusy(key);setLocationState({status:'loading',message:''});setSearchState({field:key,status:'idle'});
    try{
      const location=await getCurrentGeneralLocation();
      const point={name:location.publicLabel,lat:Number(location.privateCoordinates.lat.toFixed(2)),lng:Number(location.privateCoordinates.lng.toFixed(2))};
@@ -36,7 +42,17 @@ export default function RoutePicker({o,d,setO,setD}){
  };
  const onMap=async m=>{let p={lat:m.lat,lng:m.lng,name:m.lat.toFixed(4)+', '+m.lng.toFixed(4)};try{p=await api(`/api/reverse?lat=${m.lat}&lng=${m.lng}`)}catch{}choose(p)};
  useEffect(()=>{if(Platform.OS!=='web')return;const f=e=>{try{if(typeof e.data==='string')onMap(JSON.parse(e.data))}catch{}};window.addEventListener('message',f);return()=>{window.removeEventListener('message',f);clearTimeout(t.current)}},[act]);
- const type=(k,txt)=>{setQ(x=>({...x,[k]:txt}));setAct(k);setLocationState({status:'idle',message:''});setApproximateLocationName('');clearTimeout(t.current);if(txt.length<3)return setOpts([]);t.current=setTimeout(()=>api('/api/geocode?q='+encodeURIComponent(txt)).then(setOpts).catch(()=>{}),600)};
+ const type=(k,txt)=>{
+   const sequence=++searchSequence.current;
+   setQ(x=>({...x,[k]:txt}));setAct(k);setLocationState({status:'idle',message:''});setApproximateLocationName('');clearTimeout(t.current);setOpts([]);
+   if(txt.trim().length<3){setSearchState({field:k,status:'idle'});return}
+   setSearchState({field:k,status:'waiting'});
+   t.current=setTimeout(async()=>{
+     setSearchState({field:k,status:'loading'});
+     try{const results=await api('/api/geocode?q='+encodeURIComponent(txt.trim()));if(sequence!==searchSequence.current)return;const matches=Array.isArray(results)?results:[];setOpts(matches);setSearchState({field:k,status:matches.length?'results':'empty'});}
+     catch{if(sequence===searchSequence.current){setOpts([]);setSearchState({field:k,status:'error'});}}
+   },600);
+ };
  const src=html(o,d);
  return <View>
     {[['o','FROM','Area, campus or landmark'],['d','TO','Destination or landmark']].map(([k,label,placeholder])=><View key={k} style={s.routeFieldBlock}>
@@ -44,6 +60,11 @@ export default function RoutePicker({o,d,setO,setD}){
      <View style={s.routeInputRow}><Animated.View style={[s.routeDot,{backgroundColor:k==='o'?C.blue:C.accent,transform:[{scale:k==='o'?originPin:destinationPin}]}]} /><In style={[s.routeInput,act===k&&{borderColor:C.blue,borderWidth:2}]} placeholder={placeholder} value={q[k]} onFocus={()=>setAct(k)} onChangeText={x=>type(k,x)}/></View>
      <TouchableOpacity style={s.currentLocationButton} onPress={()=>useCurrentLocation(k)} disabled={!!locationBusy} activeOpacity={0.82}><View style={s.currentLocationIcon}><Text style={s.currentLocationIconText}>⌖</Text></View><Text style={s.currentLocationText}>{locationBusy===k?'Finding nearby area…':'Use current location'}</Text></TouchableOpacity>
     </View>)}
+  <View><Text style={s.mapCaption}>Saved locations for {act==='o'?'From':'To'}</Text>{savedLocationState==='loading'&&<Text style={s.locationNotice}>Loading saved locations…</Text>}{savedLocationState==='error'&&<View><Text style={[s.locationNotice,s.locationNoticeError]}>Saved locations could not be loaded.</Text><TouchableOpacity onPress={retrySavedLocations}><Text style={s.profileLink}>Try again</Text></TouchableOpacity></View>}{savedLocationState==='empty'&&<Text style={s.locationNotice}>No saved locations yet. You can add them in your profile.</Text>}{savedLocationState==='ready'&&savedLocations.filter(location=>location.lat!==null&&location.lat!==undefined&&location.lng!==null&&location.lng!==undefined&&Number.isFinite(Number(location.lat))&&Number.isFinite(Number(location.lng))).map(location=><TouchableOpacity key={location._id} onPress={()=>choose({name:location.name,lat:Number(location.lat),lng:Number(location.lng)})} style={s.locationSuggestion}><View style={s.locationSuggestionPin}><Text style={s.currentLocationIconText}>⌖</Text></View><View style={{flex:1}}><Text style={s.name}>{location.label||location.name}</Text>{location.label&&location.name&&location.label!==location.name&&<Text style={s.locationSuggestionText}>{location.name}</Text>}</View></TouchableOpacity>)}</View>
+  {searchState.field===act&&searchState.status==='waiting'&&<Text style={s.locationNotice}>Waiting to search…</Text>}
+  {searchState.field===act&&searchState.status==='loading'&&<Text style={s.locationNotice}>Searching locations…</Text>}
+  {searchState.field===act&&searchState.status==='empty'&&<Text style={s.locationNotice}>No locations found. Try a nearby area or landmark, or choose a point on the map.</Text>}
+  {searchState.field===act&&searchState.status==='error'&&<Text style={[s.locationNotice,s.locationNoticeError]}>Location search failed. Check your connection, try again, or choose a point on the map.</Text>}
   {opts.map((p,i)=><TouchableOpacity key={i} onPress={()=>choose(p)} style={s.locationSuggestion}><View style={s.locationSuggestionPin}><Text style={s.currentLocationIconText}>•</Text></View><Text style={s.locationSuggestionText}>{p.name}</Text></TouchableOpacity>)}
   {!!locationState.message&&<Text style={[s.locationNotice,locationState.status==='error'&&s.locationNoticeError]}>{locationState.message}</Text>}
   <Text style={s.mapCaption}>Choose your stops by searching or dropping pins</Text>

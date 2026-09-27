@@ -6,11 +6,11 @@ let token = null;
 export const setToken = (t) => { token = t };
 
 export async function api(path, body, method, opts = {}) {
-  const isFormData = body instanceof FormData;
+  const isFormData = body && typeof body.append === 'function';
   const r = await fetch(API + path, {
     method: method || (body ? 'POST' : 'GET'),
     headers: {
-      'Content-Type': isFormData ? undefined : 'application/json',
+      ...(!isFormData ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: 'Bearer ' + token } : {}),
       ...opts.headers,
     },

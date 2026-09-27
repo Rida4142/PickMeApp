@@ -4,10 +4,10 @@
     "slug": "pickme",
     "version": "1.0.0",
     "orientation": "portrait",
-    "backgroundColor": "#FFF9E9",
+    "backgroundColor": "#FFF9EC",
     "newArchEnabled": true,
     "splash": {
-      "backgroundColor": "#FFD84D",
+      "backgroundColor": "#FFF9EC",
       "resizeMode": "contain"
     },
     "android": {
@@ -18,7 +18,13 @@
     },
     "plugins": [
       "@react-native-community/datetimepicker",
-      "expo-location"
+      "expo-location",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "PickMe accesses your selected photos to set your profile picture."
+        }
+      ]
     ]
   }
 }

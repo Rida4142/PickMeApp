@@ -1,5 +1,5 @@
 import React, { Component, useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Linking, Platform, SafeAreaView, ScrollView, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import { Alert, Animated, Linking, Platform, SafeAreaView, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { useFonts } from 'expo-font';
 import { Fredoka_600SemiBold } from '@expo-google-fonts/fredoka/600SemiBold';
 import { DMSans_400Regular } from '@expo-google-fonts/dm-sans/400Regular';
@@ -12,10 +12,11 @@ import { CarIllustration, DoodleSparkles, RouteDoodle } from './components/Illus
 import AuthScreen from './screens/AuthScreen';
 import OnboardingScreen from './screens/OnboardingScreen';
 import { DetailScreen, Guest, ProfileScreen, RequestsScreen, TripsScreen } from './screens/RideScreens';
+import InboxScreen, { RequestNotificationTarget } from './screens/InboxScreen';
 import { plusDays, today } from './utils/dates';
 const blankCommute = () => ({ origin: null, dest: null, days: [0, 1, 2, 3, 4], startTime: '08:30', endTime: '09:00', startDate: today(), endDate: plusDays(30), role: 'need', seats: '1', price: '0' });
 const say = (message) => Platform.OS === 'web' ? window.alert(message) : Alert.alert('PickMe', message);
-const tabs = [['home', '⌂', 'Home'], ['post', '+', 'Post'], ['requests', '▣', 'Requests'], ['trips', '◷', 'Trips'], ['profile', '●', 'Profile']];
+const tabs = [['home', '\u2302', 'Home'], ['post', '+', 'Post'], ['requests', '\u2637', 'Requests'], ['inbox', '\u2709', 'Inbox'], ['trips', '\u25f7', 'Trips'], ['profile', '\u25cf', 'Profile']];
 const routeSuggestions = [
   { from: 'G-10', to: 'H-12', region: 'Islamabad' },
   { from: 'Bahria Town', to: 'NUST', region: 'Islamabad' },
@@ -28,8 +29,10 @@ function AppTab({ tab, active, onPress }) {
     Animated.spring(scale, { toValue: active ? 1.12 : 1, speed: 24, bounciness: 4, useNativeDriver: true }).start();
   }, [active, scale]);
   const [key, icon, label] = tab;
-  return <TouchableOpacity onPress={onPress} style={[s.tabButton, key === 'post' && (active ? s.addTabActive : s.addTab)]}>
-    <Animated.Text style={[s.tabIcon, { fontSize: key === 'post' ? 27 : 19, color: key === 'post' ? C.ink : undefined, transform: [{ scale }] }]}>{icon}</Animated.Text>
+  return <TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: active }} onPress={onPress} style={s.tabButton}>
+    <Animated.View style={[s.tabIconWrap, key === 'post' && (active ? s.addTabActive : s.addTab), active && key !== 'post' && s.tabIconWrapActive, { transform: [{ scale }] }]}>
+      <Text style={[s.tabIcon, { fontSize: key === 'post' ? 25 : 19, color: key === 'post' ? C.ink : active ? C.ink : C.mute }]}>{icon}</Text>
+    </Animated.View>
     <Text style={[s.tabLabel, { color: active ? C.ink : C.mute }]}>{label}</Text>
   </TouchableOpacity>;
 }
@@ -46,8 +49,9 @@ function App() {
   const [homeNotice, setHomeNotice] = useState('');
   const [profileNotice, setProfileNotice] = useState('');
   const [routeLoading, setRouteLoading] = useState('');
+  const [detailBackScreen, setDetailBackScreen] = useState('results');
+  const [notificationTarget, setNotificationTarget] = useState(null);
   const screenMotion = useRef(new Animated.Value(1)).current;
-  const { width } = useWindowDimensions();
 
   useEffect(() => {
     let mounted = true;
@@ -114,20 +118,33 @@ function App() {
   const logout = async () => { await session.clear(); setToken(null); setMe(null); setAuthLocked(true); go('auth'); };
   const finishAuth = (token, user) => { setToken(token); setMe(user); setAuthLocked(false); session.save(token, user); go('home'); };
   const finishOnboarding = async () => { await onBoard.set(); setAuthLocked(false); go('auth'); };
+  const openNotification = async (notification) => {
+    setNotificationTarget(notification);
+    const type = ({ request: 'BOOKING_REQUEST', accepted: 'BOOKING_ACCEPTED', rejected: 'BOOKING_REJECTED', cancelled: 'BOOKING_CANCELLED' })[notification.type] || notification.type;
+    if (notification.tripId) { go('trips'); return; }
+    if (type?.startsWith('BOOKING_') || notification.bookingId || notification.data?.requestId) { go('requests'); return; }
+    if (notification.commuteId) {
+      try { const commute = await api(`/api/commutes/${notification.commuteId}`); setSelected(commute); setDetailBackScreen('inbox'); go('detail'); }
+      catch { go('requests'); }
+      return;
+    }
+    go('requests');
+  };
 
-  if (!fontsLoaded) return <View style={[s.fill, { backgroundColor: C.y, justifyContent: 'center', alignItems: 'center' }]}><Text style={s.logo}>PickMe</Text></View>;
-  if (screen === 'splash') return <View style={[s.fill, { backgroundColor: C.y, justifyContent: 'center', padding: 24 }]}><View style={{ width: '100%', maxWidth: 520, alignSelf: 'center', alignItems: width >= 700 ? 'center' : 'flex-start' }}><Text style={s.logo}>PickMe</Text><Text style={s.splashTagline}>Same route.{ '\n' }Better together.</Text><CarIllustration style={s.splashIllustration} /><Text style={s.splashHint}>Share the ride. Keep more.</Text></View></View>;
+  if (!fontsLoaded) return <View style={[s.fill, s.splashScreen, { justifyContent: 'center', alignItems: 'center' }]}><Text style={s.logo}>PickMe</Text></View>;
+  if (screen === 'splash') return <View style={[s.fill, s.splashScreen, { justifyContent: 'center', padding: 24 }]}><View style={{ width: '100%', maxWidth: 520, alignSelf: 'center', alignItems: 'center' }}><Text style={s.logo}>PickMe</Text><Text style={s.splashTagline}>Same route.{ '\n' }Better together.</Text><CarIllustration style={s.splashIllustration} /><Text style={s.splashHint}>Share the ride. Keep more.</Text></View></View>;
   if (screen === 'onboarding') return <OnboardingScreen page={onboardingPage} setPage={setOnboardingPage} done={finishOnboarding} />;
   if (screen === 'search') return <View style={[s.fill, s.searchLoading]}><DoodleSparkles style={s.loadingSparkles} /><Text style={s.h1}>Finding your way-friend</Text><Text style={s.introText}>Checking who’s travelling your route.</Text><RouteDoodle repeat style={s.loadingRoute} /><Text style={s.mute}>Matching your stops and schedule…</Text></View>;
   if (screen === 'auth') return <AuthScreen onDone={finishAuth} back={authLocked ? undefined : () => go('home')} say={say} />;
-  if (screen === 'detail') return <DetailScreen commute={selected} back={() => go('results')} need={requireUser} />;
+  if (screen === 'detail') return <DetailScreen commute={selected} back={() => go(detailBackScreen)} need={requireUser} />;
 
   return <SafeAreaView style={s.fill}><Animated.View style={[s.mainShell, { opacity: screenMotion, transform: [{ translateY: screenMotion.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }] }]}><ScrollView contentContainerStyle={s.pad} keyboardShouldPersistTaps="handled">
     {screen === 'home' && <><View style={s.homeIntro}><Text style={s.eyebrow}>YOUR DAILY ROUTE  ✦</Text><Text style={s.homeTitle}>Find someone going your way.</Text><Text style={s.introText}>Same stops, shared rides, easier mornings.</Text><RouteDoodle style={s.homeRouteDoodle} /></View><CommuteForm form={form} setForm={setForm} post={false} /><View style={s.homeActions}><Btn yellow t="Find a Ride  →" onPress={search} style={s.homeActionButton} /><Btn dark t="Offer a Ride  ↗" onPress={() => go('post')} style={s.homeActionButton} /></View>{!!homeNotice && <View style={s.inlineNotice}><DoodleSparkles style={s.noticeSparkle} /><Text style={s.noticeText}>{homeNotice}</Text></View>}<Text style={s.lbl}>Suggested local routes</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.suggestedRouteList}>{routeSuggestions.map((route) => { const routeKey = `${route.from}-${route.to}`; return <TouchableOpacity key={routeKey} disabled={!!routeLoading} activeOpacity={0.84} onPress={() => loadSuggestedRoute(route)} style={s.suggestedRouteCard}><Text style={s.suggestedRouteEyebrow}>{routeLoading === routeKey ? 'LOOKING UP…' : route.region.toUpperCase()}</Text><Text style={s.suggestedRouteText}>{route.from}</Text><Text style={s.suggestedRouteArrow}>↘</Text><Text style={s.suggestedRouteText}>{route.to}</Text></TouchableOpacity>; })}</ScrollView></>}
     {screen === 'post' && <><View style={s.postIntro}><Text style={s.eyebrow}>COMMUNITY COMMUTE  ✦</Text><Text style={s.h1}>Offer a seat on your route.</Text><Text style={s.introText}>Make your regular commute visible and share the cost.</Text><RouteDoodle style={s.postRouteDoodle} /></View><CommuteForm form={form} setForm={setForm} post /><Btn yellow t="Post Commute  →" onPress={saveCommute} /></>}
-    {screen === 'results' && <><TouchableOpacity onPress={() => go('home')} style={s.backLink}><Text style={s.backLinkText}>←  Edit route</Text></TouchableOpacity><Text style={s.h2}>Available Rides</Text><Text style={[s.mute, { marginBottom: 14 }]}>{form.origin?.name} → {form.dest?.name}</Text>{results.length === 0 && <View style={s.emptyState}><RouteDoodle style={s.emptyRouteDoodle} /><Text style={s.name}>Looks like you’re travelling solo today.</Text><Text style={[s.mute, { marginTop: 5 }]}>Try another stop or post your commute so people going your way can find you.</Text><Btn yellow t="Post my commute" onPress={() => go('post')} /></View>}{results.map((commute, index) => <RideMatchCard key={commute._id} commute={commute} index={index} onPress={() => { setSelected(commute); go('detail'); }} />)}</>}
-    {screen === 'requests' && (me ? <RequestsScreen /> : <Guest go={go} />)}
-    {screen === 'trips' && (me ? <TripsScreen me={me} /> : <Guest go={go} />)}
+    {screen === 'results' && <><TouchableOpacity onPress={() => go('home')} style={s.backLink}><Text style={s.backLinkText}>←  Edit route</Text></TouchableOpacity><Text style={s.h2}>Available Rides</Text><Text style={[s.mute, { marginBottom: 14 }]}>{form.origin?.name} → {form.dest?.name}</Text>{results.length === 0 && <View style={s.emptyState}><RouteDoodle style={s.emptyRouteDoodle} /><Text style={s.name}>Looks like you’re travelling solo today.</Text><Text style={[s.mute, { marginTop: 5 }]}>Try another stop or post your commute so people going your way can find you.</Text><Btn yellow t="Post my commute" onPress={() => go('post')} /></View>}{results.map((commute, index) => <RideMatchCard key={commute._id} commute={commute} index={index} onPress={() => { setSelected(commute); setDetailBackScreen('results'); go('detail'); }} />)}</>}
+    {screen === 'requests' && (me ? <>{(notificationTarget?.data?.requestId||notificationTarget?.bookingId)&&<RequestNotificationTarget requestId={notificationTarget?.data?.requestId} bookingId={notificationTarget?.bookingId}/>}<RequestsScreen /></> : <Guest go={go} />)}
+    {screen === 'inbox' && (me ? <InboxScreen onOpen={openNotification} /> : <Guest go={go} />)}
+    {screen === 'trips' && (me ? <TripsScreen me={me} focusTripId={notificationTarget?.tripId} /> : <Guest go={go} />)}
     {screen === 'profile' && (me ? <ProfileScreen me={me} setMe={setMe} logout={logout} go={go} setForm={setForm} notice={profileNotice} /> : <Guest go={go} />)}
   </ScrollView><View style={s.tabs}>{tabs.map((tab) => <AppTab key={tab[0]} tab={tab} active={screen === tab[0]} onPress={() => go(tab[0])} />)}</View></Animated.View></SafeAreaView>;
 }

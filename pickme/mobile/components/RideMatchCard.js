@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Animated, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, Image, Text, TouchableOpacity, View } from 'react-native';
 import { C, s } from '../ui';
 
 export default function RideMatchCard({ commute, index, onPress }) {
@@ -13,7 +13,7 @@ export default function RideMatchCard({ commute, index, onPress }) {
   return <Animated.View style={{ opacity: entrance, transform: [{ translateY: entrance.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
     <TouchableOpacity activeOpacity={0.82} style={s.rideCard} onPress={onPress}>
       <View style={s.rideCardTop}>
-        <View style={s.rideAvatar}><Text style={s.rideAvatarText}>{name.slice(0, 1).toUpperCase()}</Text></View>
+        <View style={s.rideAvatar}>{commute.user?.profileImage ? <Image source={{ uri: commute.user.profileImage }} style={{ width: 42, height: 42, borderRadius: 21 }} /> : <Text style={s.rideAvatarText}>{name.slice(0, 1).toUpperCase()}</Text>}</View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={s.name} numberOfLines={1}>{name}{commute.user?.verified ? '  ✓' : ''}</Text>
           <Text style={s.rideRating}>★ {commute.user?.avg || 'New'} <Text style={s.mute}>({commute.user?.count || 0} ratings)</Text></Text>

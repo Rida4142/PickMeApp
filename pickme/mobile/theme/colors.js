@@ -1,9 +1,12 @@
 export const colors = {
   primary: '#FFD84D',
   primaryDark: '#EFBF24',
+  primarySoft: '#FFF1B8',
   secondary: '#4054E8',
+  secondarySoft: '#E8ECFF',
   accent: '#FF705B',
-  cream: '#FFF9E9',
+  coralSoft: '#FFF0EC',
+  cream: '#FFF9EC',
   ink: '#17233E',
   muted: '#77766F',
   border: '#EFE8D8',
@@ -12,4 +15,5 @@ export const colors = {
   mint: '#DDF2E8',
   lilac: '#E8E2FF',
   red: '#E5484D',
+  orange: '#F19D54',
 };
