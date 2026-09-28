@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PickMe Workflow Status Report</title>
+  <style>
+    :root { color-scheme: light; font-family: Calibri, Arial, sans-serif; color: #202a35; }
+    body { max-width: 980px; margin: 36px auto; padding: 0 32px 48px; line-height: 1.5; }
+    h1 { margin: 0 0 8px; color: #174b58; font-size: 30px; }
+    h2 { margin: 30px 0 10px; padding-bottom: 5px; color: #174b58; border-bottom: 2px solid #d6e6e7; font-size: 21px; }
+    p { margin: 9px 0; }
+    .meta { color: #52616b; margin-bottom: 24px; }
+    table { width: 100%; border-collapse: collapse; margin: 14px 0 20px; font-size: 14px; }
+    th, td { border: 1px solid #bdcbd0; padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { background: #e8f1f1; color: #174b58; }
+    tr { page-break-inside: avoid; }
+    li { margin: 5px 0; }
+    .next { background: #f2f7f5; padding: 12px 18px; border-left: 4px solid #3a8068; }
+    .code-map code { font-family: Consolas, monospace; font-size: 13px; }
+    @media print { body { max-width: none; margin: 0; padding: 0; } h2 { page-break-after: avoid; } }
+  </style>
+</head>
+<body>
+  <h1>PickMe Workflow Status Report</h1>
+  <p class="meta"><strong>Assessment date:</strong> 2026-09-28<br>
+  <strong>Scope:</strong> Current mobile/web client and Express/MongoDB API in this repository. This is a workflow inventory, not a production security or load-test certification.</p>
+
+  <h2>Executive Summary</h2>
+  <p>PickMe has an implemented ride-sharing loop: users can register or log in, locate stops, post recurring or one-time commutes, search and rank compatible rides, request a seat, and manage trips and profiles. The running web app and its read-only screens were exercised during this assessment. Geocoding returned results, ride search displayed ranked matches, and ride details showed live occurrence and seat data.</p>
+  <p>The main limitation is validation depth: state-changing actions were not submitted against the shared live data, and there is no automated test suite in the repository. Therefore, booking acceptance/cancellation, trip completion, rating persistence, native-device behavior, and external integrations are implemented in code but are not certified end to end here.</p>
+  <p>Two workflow defects identified in the audit were corrected in the working tree: trip completion is now scoped to a commute date, and match cards display a fallback when an older commute has no price. Expo web export, server syntax, and editor diagnostics passed after those changes.</p>
+
+  <h2>Workflow Inventory</h2>
+  <table>
+    <thead><tr><th>Workflow</th><th>Current implementation</th><th>Assessment</th></tr></thead>
+    <tbody>
+      <tr><td>Sign up and log in</td><td>Phone/password auth, registration validation, session storage and JWT-backed API calls.</td><td>Implemented. Live session/profile load observed; new registration and logout/login were not run.</td></tr>
+      <tr><td>Google/Apple sign-in</td><td>Buttons show a message that the providers are not connected.</td><td>Not implemented; buttons are placeholders.</td></tr>
+      <tr><td>Current location</td><td>Browser/device GPS, permission handling, reverse-geocoding to a general-area label.</td><td>Implemented in the client; permission-denied and native-device cases not exercised.</td></tr>
+      <tr><td>Search/pick a place</td><td>Debounced place suggestions from the API; map pin selection and map display are in the client.</td><td>Geocoding verified live for NUST. Map interaction and device GPS were not fully tested.</td></tr>
+      <tr><td>Route and distance</td><td>Server requests OSRM driving geometry; straight-line distance fallback is used when routing fails.</td><td>Implemented; fallback path not forced during this assessment.</td></tr>
+      <tr><td>Saved locations</td><td>Authenticated list/create/update/delete with geocoded coordinates and types.</td><td>Implemented in code; write operations not run.</td></tr>
+      <tr><td>Create and manage commutes</td><td>Recurring and one-time schedules, ride roles/modes, vehicle capacity, time flexibility and detour preferences; edit, pause, delete and cancel dates.</td><td>Implemented in code; read-only commute screens loaded live. Write actions not run.</td></tr>
+      <tr><td>Discover active rides</td><td>Loads active commutes, calculates occurrence availability, hides full listings.</td><td>Verified live: cards and available seats rendered. This is a listing, not the ranked matcher.</td></tr>
+      <tr><td>Find and rank matches</td><td>Filters by role, date, schedule, available seats and detour; scores route, time, weekday and endpoint proximity; sorts by score.</td><td>Verified live: search returned ordered match cards and opening one displayed its details.</td></tr>
+      <tr><td>Request a seat</td><td>Selects an available seat/date, holds it, creates a pending request; owner can accept/reject; passenger can cancel. Seat state is occurrence-specific.</td><td>Implemented in code; an existing pending request rendered in the live UI. New request/accept/reject/cancel transitions were not executed.</td></tr>
+      <tr><td>Inbox and notifications</td><td>Persistent in-app list, open related request/booking/commute/trip, mark one/all as read.</td><td>Inbox loaded live. Push delivery, polling/realtime updates and notification delivery timing are not implemented/verified here.</td></tr>
+      <tr><td>Trip completion and cost split</td><td>Owner records a completed trip and fare; server derives participants, stores the trip, marks related records complete and divides fare equally.</td><td>Implemented in code. Date scoping was corrected; trip writes and multi-date cases still need integration tests.</td></tr>
+      <tr><td>Reviews and ratings</td><td>Trip participants can rate each other after completion; duplicate/self/nonparticipant ratings are rejected server-side.</td><td>Implemented in code; no rating submission tested.</td></tr>
+      <tr><td>Profile and privacy</td><td>Edit personal data, vehicle, general location, visibility preferences; display rating/reviews and owned commutes.</td><td>Profile loaded live. Updates were not submitted.</td></tr>
+      <tr><td>Profile photo</td><td>Image selection and upload/removal via Cloudinary, gated by server credentials.</td><td>Implemented conditionally; Cloudinary configuration and upload were not tested.</td></tr>
+      <tr><td>WhatsApp contact</td><td>Opens a wa.me URL when a phone number is visible.</td><td>Implemented; external app/browser handoff not tested.</td></tr>
+      <tr><td>Report/block/safety</td><td>Authenticated report/block endpoints; blocked users are excluded from matching.</td><td>Implemented in code; writes and visibility/privacy edge cases not tested.</td></tr>
+      <tr><td>Purchases/subscriptions</td><td>RevenueCat SDK is configured at app startup.</td><td>SDK wiring only; no product catalog, paywall, purchase, restore, entitlement check, or server-side entitlement flow found.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Live Checks Performed</h2>
+  <ul>
+    <li>Opened the running Expo web app at http://localhost:8081.</li>
+    <li>Queried /api/geocode?q=Nust through the configured LAN API and localhost:3000; both returned HTTP 200 with place suggestions. Nominatim also returned HTTP 200 directly.</li>
+    <li>Loaded active commute cards, submitted a ride search, viewed ranked matches and ride details, and observed date-specific seat availability.</li>
+    <li>Loaded Requests, Inbox, Trips, and Profile screens. Existing commute/request data appeared in the UI.</li>
+    <li>Built the Expo web export, checked server JavaScript syntax, and checked editor diagnostics after the audit fixes.</li>
+  </ul>
+  <p>These checks used the current web app and existing data. They do not prove the whole application works on iOS/Android or that each write path succeeds under concurrent use.</p>
+
+  <h2>Known Gaps and Risks</h2>
+  <ol>
+    <li><strong>No automated tests are present.</strong> There are no repository test scripts or test files covering API, model lifecycle, or UI flows.</li>
+    <li><strong>Critical mutations need a safe integration environment.</strong> Request creation, seat concurrency, accept/reject/cancel, commute cancellation, trip completion and ratings were not exercised end to end.</li>
+    <li><strong>Social authentication is only a placeholder.</strong> Google and Apple buttons do not authenticate.</li>
+    <li><strong>RevenueCat is not a user feature yet.</strong> The SDK initializes, but the purchase lifecycle and entitlement enforcement are absent.</li>
+    <li><strong>Notifications are in-app records only in the inspected workflow.</strong> Push registration/delivery and realtime refresh are not wired into the visible client flow.</li>
+    <li><strong>External service constraints need production handling.</strong> Geocoding depends on public Nominatim and routing on public OSRM; availability, quotas/rate limits, attribution, retries and provider fallback need deliberate operational treatment.</li>
+    <li><strong>Optional infrastructure paths are unverified.</strong> Cloudinary photo operations, native GPS permissions, WhatsApp handoff and native builds need device/configuration checks.</li>
+    <li><strong>Identity is not fully verified.</strong> The README says CNIC is stored but not verified; phone/email verification and account recovery are not represented in the inspected auth flow.</li>
+    <li><strong>Deployment and observability need validation.</strong> Verify production secrets/configuration, API error logging, health checks, backups, and recovery before real users depend on the service.</li>
+  </ol>
+
+  <h2>Recommended Next Workflow</h2>
+  <div class="next">
+    <p>Prioritize an automated, isolated <strong>two-user booking lifecycle test</strong> before adding more features. It exercises the central value path and protects the date-scoped completion fix without touching real user records.</p>
+    <ol>
+      <li>Create a dedicated test database and two seeded users: one driver and one passenger. Keep tests off the shared/live database.</li>
+      <li>Have the driver create a recurring commute with at least two eligible dates and available seats.</li>
+      <li>Have the passenger search, verify the match score/order, open ride details, select a date and seat, and submit a request.</li>
+      <li>Assert the seat becomes selected for that date, duplicate requests are rejected, and the driver sees the incoming request/notification.</li>
+      <li>Accept the request; assert a confirmed booking exists, the occurrence seat becomes booked, the passenger sees acceptance, and contact visibility follows privacy settings.</li>
+      <li>Repeat for another date, then cancel or reject one date and verify only that date’s seat/request is released or transitioned.</li>
+      <li>Complete one date only. Assert only that date’s booking/request and occurrence become completed, the other date remains unchanged, and the fare split includes the right participants.</li>
+      <li>Submit participant ratings; verify ratings appear in trip/profile results and duplicate or unauthorized ratings are rejected.</li>
+      <li>Add a concurrency test where two passengers contend for the same seat; only one request should acquire the hold.</li>
+      <li>Run the same core flow in a browser smoke test, then repeat permission, map, date/time and photo cases on a physical Android/iOS build.</li>
+    </ol>
+  </div>
+
+  <h2>Suggested Follow-On Order</h2>
+  <ol>
+    <li>Establish a test database, seed/reset fixtures, and automated API tests for the booking lifecycle above.</li>
+    <li>Add UI smoke tests for registration/login, location selection, commute post, match search, requests, inbox, trips and profile.</li>
+    <li>Decide and implement actual product scope for social login, push notifications and purchases, or remove/disable their placeholder UI until ready.</li>
+    <li>Validate native-device and optional-provider integrations: GPS permissions, maps, Cloudinary, WhatsApp and store builds.</li>
+    <li>Prepare deployment: secrets management, health/readiness checks, rate limiting/provider policy, logs/alerts, backup/restore and production smoke tests.</li>
+  </ol>
+
+  <h2>Code Map</h2>
+  <ul class="code-map">
+    <li>App routing, session startup, discover and search: <code>mobile/App.js</code></li>
+    <li>Authentication and current-location signup: <code>mobile/screens/AuthScreen.js</code>, <code>mobile/utils/location.js</code></li>
+    <li>Map/location search and route entry: <code>mobile/MapPick.js</code></li>
+    <li>Commute form and post flow: <code>mobile/components/CommuteForm.js</code>, <code>mobile/components/PostFlow.js</code></li>
+    <li>Requests, ride details, trips, profile: <code>mobile/screens/RideScreens.js</code></li>
+    <li>Inbox: <code>mobile/screens/InboxScreen.js</code></li>
+    <li>HTTP client/session token: <code>mobile/api.js</code></li>
+    <li>API routes, matching, occurrence/seat lifecycle, trips and ratings: <code>server/index.js</code></li>
+    <li>MongoDB schemas and occurrence indexes: <code>server/models/index.js</code></li>
+    <li>OSRM route and distance helpers: <code>server/services/routing.js</code></li>
+    <li>External purchase SDK initialization: <code>mobile/utils/purchases.js</code></li>
+  </ul>
+</body>
+</html>

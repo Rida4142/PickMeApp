@@ -30,7 +30,10 @@ export default function RideMatchCard({ commute, index, onPress }) {
       </View>
       <View style={s.rideCardFooter}>
         <Text style={s.rideMeta}>{commute.seats} seats · {commute.role === 'offer' ? 'Offering a ride' : 'Needs a ride'}</Text>
-        <Text style={s.ridePrice}>Rs. {commute.price}<Text style={s.ridePriceUnit}> / seat</Text></Text>
+        <Text style={s.ridePrice}>
+          {commute.price != null && commute.price !== '' ? `Rs. ${commute.price}` : 'Price not set'}
+          {commute.price != null && commute.price !== '' && <Text style={s.ridePriceUnit}> / seat</Text>}
+        </Text>
       </View>
     </TouchableOpacity>
   </Animated.View>;

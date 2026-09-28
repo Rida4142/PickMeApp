@@ -945,10 +945,11 @@ app.patch('/api/bookings/:id',auth,h(async(q,s)=>{
 app.post('/api/trips',auth,h(async(q,s)=>{const{commuteId,distanceKm,fare}=q.body,c=await Commute.findOne({_id:commuteId,userId:q.uid});if(!c)return s.status(403).json({error:'Not your commute'});
   const tripDate=q.body.tripDate||new Date().toISOString().slice(0,10);const tripDay=q.body.tripDay;
   const bookingFilter={commuteId,status:'confirmed',$or:[{requestedDate:tripDate},{requestedDate:{$exists:false},requestedDay:{$exists:false}}]};if(tripDay!==undefined)bookingFilter.$or.push({requestedDay:+tripDay});
-  const bookings=await Booking.find(bookingFilter);const rq=bookings.length?null:await Request.find({commuteId,status:'accepted'});const riders=bookings.length?bookings.map(b=>b.passengerId):rq.map(r=>r.fromUser);if(!riders.length)return s.status(400).json({error:'No accepted riders yet'});
+  const requestFilter={commuteId,status:'accepted',$or:[{requestedDate:tripDate},{requestedDate:{$exists:false},requestedDay:{$exists:false}}]};if(tripDay!==undefined)requestFilter.$or.push({requestedDay:+tripDay});
+  const bookings=await Booking.find(bookingFilter);const rq=bookings.length?null:await Request.find(requestFilter);const riders=bookings.length?bookings.map(b=>b.passengerId):rq.map(r=>r.fromUser);if(!riders.length)return s.status(400).json({error:'No accepted riders yet'});
   if(!(+fare>0))return s.status(400).json({error:'Enter the total fare'});
   const t=await Trip.create({commuteId,driverId:q.uid,riders,origin:c.origin,dest:c.dest,tripDate,startTime:c.startTime,endTime:c.endTime,distanceKm:+distanceKm,fare:+fare,perPerson:Math.round(+fare/(riders.length+1)),status:'completed'});
-  if(bookings.length)await Booking.updateMany({_id:{$in:bookings.map(b=>b._id)}},{status:'completed'});await Request.updateMany({commuteId,status:'accepted'},{status:'completed',tripId:t._id});await RideOccurrence.updateOne({commuteId,date:tripDate,status:{$in:['active','full']}},{status:'completed'});s.json(t);}));
+  if(bookings.length)await Booking.updateMany({_id:{$in:bookings.map(b=>b._id)}},{status:'completed'});await Request.updateMany(requestFilter,{status:'completed',tripId:t._id});await RideOccurrence.updateOne({commuteId,date:tripDate,status:{$in:['active','full']}},{status:'completed'});s.json(t);}));
 
 app.get('/api/trips/mine',auth,h(async(q,s)=>{const ts=await Trip.find({$or:[{driverId:q.uid},{riders:q.uid}]}).sort('-createdAt').populate('driverId riders','name phone email profileImage verified gender city vehicle privacy').lean();
   const rs=await Rating.find({fromUser:q.uid,tripId:{$in:ts.map(t=>t._id)}});

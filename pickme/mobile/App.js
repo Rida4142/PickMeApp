@@ -1,4 +1,5 @@
 import React, { Component, useEffect, useRef, useState } from 'react';
+import { initPurchases } from './utils/purchases';
 import {
   Alert,
   Animated,
@@ -110,6 +111,7 @@ function AppTab({ tab, active, onPress }) {
   }, [active, scale]);
 
   const [key, icon, label] = tab;
+  useEffect(() => { initPurchases(); }, []);
 
   return (
     <TouchableOpacity

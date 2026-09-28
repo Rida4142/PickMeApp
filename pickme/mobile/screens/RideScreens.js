@@ -315,13 +315,14 @@ export function RequestsScreen() {
       .then(res => { load(); return res; })
       .catch(err => say(err.message));
 
-  // Build a map of commuteId → { commute, count } for rides with accepted riders
+  // Keep completion prompts scoped to the ride date as well as the commute.
   const accepted = {};
   data.incoming
     .filter(r => r.status === 'accepted' && r.commuteId)
     .forEach(r => {
-      const key = r.commuteId._id;
-      if (!accepted[key]) accepted[key] = { commute: r.commuteId, count: 0 };
+      const date = r.requestedDate || new Date().toISOString().slice(0, 10);
+      const key = `${r.commuteId._id}:${date}`;
+      if (!accepted[key]) accepted[key] = { commute: r.commuteId, date, count: 0 };
       accepted[key].count += 1;
     });
 
@@ -388,10 +389,10 @@ export function RequestsScreen() {
       ))}
 
       {/* ── Complete trip prompt for accepted riders ── */}
-      {Object.values(accepted).map(({ commute, count }) => (
-        <View key={commute._id} style={[s.card, { backgroundColor: C.mint }]}>
+      {Object.values(accepted).map(({ commute, date, count }) => (
+        <View key={`${commute._id}:${date}`} style={[s.card, { backgroundColor: C.mint }]}>
           <Text style={s.name}>Ride complete with {count} rider{count !== 1 ? 's' : ''}?</Text>
-          {tripForm && tripForm.commute._id === commute._id ? (
+          {tripForm && tripForm.commute._id === commute._id && tripForm.date === date ? (
             <>
               <Text style={s.lbl}>Distance (km)</Text>
               <In keyboardType="numeric" value={String(tripForm.km)} onChangeText={v => setTripForm({ ...tripForm, km: v })} />
@@ -405,7 +406,7 @@ export function RequestsScreen() {
           ) : (
             <Btn yellow t="Complete trip & split cost" onPress={() => setTripForm({
               commute,
-              date: new Date().toISOString().slice(0, 10),
+              date,
               km:   Math.round(hav(commute.origin, commute.dest) * 1.3),
               fare: '',
             })} />
