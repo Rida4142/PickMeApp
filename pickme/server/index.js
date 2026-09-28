@@ -1,3 +1,6 @@
+const dns = require('dns');
+dns.setServers(['1.1.1.1']);
+
 require('dotenv').config();
 const express=require('express'),cors=require('cors'),mongoose=require('mongoose'),bcrypt=require('bcryptjs'),jwt=require('jsonwebtoken');
 const {randomUUID}=require('node:crypto'),multer=require('multer'),cloudinary=require('cloudinary').v2;
@@ -5,7 +8,7 @@ const app=express();app.use(cors());app.use(express.json());
 const SECRET=process.env.JWT_SECRET||'pickme-dev';
 const cloudinaryConfigured=Boolean(process.env.CLOUDINARY_CLOUD_NAME&&process.env.CLOUDINARY_API_KEY&&process.env.CLOUDINARY_API_SECRET);
 if(cloudinaryConfigured)cloudinary.config({cloud_name:process.env.CLOUDINARY_CLOUD_NAME,api_key:process.env.CLOUDINARY_API_KEY,api_secret:process.env.CLOUDINARY_API_SECRET,secure:true});
-const {User,Commute,SavedLocation,Notification,Request,Booking,Buddy,Invitation,Trip,Rating,Report}=require('./models');
+const {User,Commute,RideOccurrence,SavedLocation,Notification,Request,Booking,Buddy,Invitation,Trip,Rating,Report}=require('./models');
 const {NH,km,getRoute,routeOverlap}=require('./services/routing');
 
 const h=f=>(q,s)=>Promise.resolve(f(q,s)).catch(e=>s.status(500).json({error:e.message}));
@@ -72,14 +75,8 @@ const mins=t=>{const[a,b]=(t||'08:00').split(':').map(Number);return a*60+b};
 const tok=u=>({token:jwt.sign({id:u._id},SECRET,{expiresIn:'30d'}),user:pub(u,{isOwner:true})});
 const DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const capacityOf=c=>Math.max(1,+c.passengerCapacity||+c.seats||1);
-const confirmedBookingCount=async(commuteId,requestedDate,requestedDay)=>{const filter={commuteId,status:'confirmed'};if(requestedDate)filter.requestedDate=requestedDate;else if(requestedDay!==undefined)filter.requestedDay=requestedDay;return Booking.countDocuments(filter)};
-const availableSeats=async(c,requestedDate,requestedDay)=>Math.max(0,capacityOf(c)-await confirmedBookingCount(c._id,requestedDate,requestedDay));
-const bookingStats=async commuteIds=>Booking.aggregate([
-  {$match:{status:'confirmed',commuteId:{$in:commuteIds}}},
-  {$lookup:{from:'users',localField:'passengerId',foreignField:'_id',as:'passenger'}},
-  {$unwind:'$passenger'},
-  {$group:{_id:'$commuteId',count:{$sum:1}}},
-]);
+
+// Confirmed passengers' genders, filtered by each passenger's privacy setting.
 const visibleBookingGenderCounts=async(commuteIds,viewerId)=>{
   const bookings=await Booking.find({status:'confirmed',commuteId:{$in:commuteIds}}).select('commuteId passengerId').populate('passengerId','gender privacy').lean();
   const contacts=await acceptedContactIds(viewerId,bookings.map(booking=>booking.passengerId?._id));
@@ -92,6 +89,233 @@ const visibleBookingGenderCounts=async(commuteIds,viewerId)=>{
   }
   return counts;
 };
+
+// ---------------------------------------------------------------------------
+// Occurrence generation
+// ---------------------------------------------------------------------------
+// Build all YYYY-MM-DD strings that fall within [from, to] and match the
+// commute's weekday pattern.  One-time commutes yield exactly one date.
+function occurrenceDates(commute, from, to) {
+  const dates = [];
+  if ((commute.tripType || 'recurring') === 'one_time') {
+    const d = commute.tripDate || commute.startDate;
+    if (d && d >= from && d <= to && (!commute.cancelledFromDate || d < commute.cancelledFromDate)) dates.push(d);
+    return dates;
+  }
+  const start = [commute.startDate || from, from].sort().pop(); // max
+  let cancelEnd = to;
+  if (commute.cancelledFromDate) {
+    const cutoff = new Date(`${commute.cancelledFromDate}T00:00:00Z`);
+    cutoff.setUTCDate(cutoff.getUTCDate() - 1);
+    cancelEnd = cutoff.toISOString().slice(0, 10);
+  }
+  const end = [commute.endDate || to, to, cancelEnd].sort()[0]; // min
+  if (start > end) return dates;
+  const cur = new Date(`${start}T00:00:00Z`);
+  const last = new Date(`${end}T00:00:00Z`);
+  while (cur <= last) {
+    const iso  = cur.toISOString().slice(0, 10);
+    const dow  = (cur.getUTCDay() + 6) % 7; // Mon=0…Sun=6
+    if (Array.isArray(commute.days) && commute.days.includes(dow)) dates.push(iso);
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return dates;
+}
+
+// Idempotently ensure RideOccurrence documents exist for every date in the
+// window.  Returns the array of occurrences (existing + newly created).
+async function generateOccurrences(commute, from, to) {
+  const dates = occurrenceDates(commute, from, to);
+  if (!dates.length) return [];
+
+  // Fetch already-existing occurrences for this window in one query
+  const existing = await RideOccurrence.find({
+    commuteId: commute._id,
+    date: { $in: dates },
+  }).lean();
+  const existingDates = new Set(existing.map(o => o.date));
+  const initialSeats = commute.rideMode === 'hired_shared_ride' ? (+commute.requestedSeats || +commute.seats || 1) : 0;
+  const initialSeatNumbers = Array.from({ length: initialSeats }, (_, index) => index + 1);
+
+  // Build insert docs only for missing dates
+  const toInsert = dates
+    .filter(d => !existingDates.has(d))
+    .map(d => ({
+      commuteId:         commute._id,
+      userId:            commute.userId,
+      date:              d,
+      startTime:         commute.startTime,
+      endTime:           commute.endTime,
+      origin:            commute.origin,
+      dest:              commute.dest,
+      passengerCapacity: capacityOf(commute),
+      initialSeats,
+      initialMaleCount:  +commute.maleCount || 0,
+      initialFemaleCount:+commute.femaleCount || 0,
+      initialOtherCount: +commute.otherCount || 0,
+      bookedSeatNumbers: initialSeatNumbers,
+      selectedSeatNumbers: [],
+      confirmedSeats:    initialSeats,
+      status:            initialSeats >= capacityOf(commute) ? 'full' : 'active',
+    }));
+
+  let created = [];
+  if (toInsert.length) {
+    // insertMany with ordered:false so a rare duplicate-key race doesn't abort
+    // the whole batch; ignore duplicate-key errors (11000)
+    try {
+      created = await RideOccurrence.insertMany(toInsert, { ordered: false });
+    } catch (e) {
+      if (e.code !== 11000 && (!e.writeErrors || e.writeErrors.some(w => w.code !== 11000))) throw e;
+      created = e.insertedDocs || [];
+    }
+  }
+
+  // Return all occurrences for the window, freshly fetched so callers get
+  // up-to-date confirmedSeats/status even for pre-existing ones
+  return RideOccurrence.find({ commuteId: commute._id, date: { $in: dates } });
+}
+
+// ---------------------------------------------------------------------------
+// Seat availability — occurrence-scoped
+// ---------------------------------------------------------------------------
+// Ensure an occurrence exists for the given date, then return available seats.
+async function occurrenceForDate(commute, date) {
+  const [occ] = await generateOccurrences(commute, date, date);
+  return occ || null;
+}
+
+const availableSeats = async (commute, date) => {
+  const occ = await occurrenceForDate(commute, date);
+  if (!occ) return 0;
+  if (occ.status === 'cancelled' || occ.status === 'full') return 0;
+  return Math.max(0, occ.passengerCapacity - occ.confirmedSeats - (occ.selectedSeatNumbers || []).length);
+};
+
+async function ensureBookedSeatNumbers(occurrenceId) {
+  const occurrence = await RideOccurrence.findById(occurrenceId).lean();
+  if (!occurrence) return null; // Ensure occurrence exists
+  const hasSeatArray = Array.isArray(occurrence.bookedSeatNumbers);
+  const bookedSeatNumbers = hasSeatArray ? occurrence.bookedSeatNumbers : [];
+  const initialSeatNumbers = Array.from({ length: +occurrence.initialSeats || 0 }, (_, index) => index + 1);
+  const confirmedSeats = +occurrence.confirmedSeats || 0;
+  if (hasSeatArray && bookedSeatNumbers.length >= Math.max(initialSeatNumbers.length, confirmedSeats)) return occurrence;
+
+  const confirmedBookings = await Booking.find({ occurrenceId, status: 'confirmed' }).select('seatNumber').lean();
+  const merged = new Set([...initialSeatNumbers, ...bookedSeatNumbers]);
+  for (const booking of confirmedBookings) {
+    if (Number.isInteger(booking.seatNumber) && booking.seatNumber > 0 && booking.seatNumber <= occurrence.passengerCapacity) merged.add(booking.seatNumber);
+  }
+  const selected = new Set(occurrence.selectedSeatNumbers || []);
+  for (let seat = 1; merged.size < confirmedSeats && seat <= occurrence.passengerCapacity; seat += 1) {
+    if (!selected.has(seat)) merged.add(seat);
+  }
+  const mergedSeatNumbers = [...merged].sort((a, b) => a - b);
+  await RideOccurrence.updateOne(
+    { _id: occurrenceId, $expr: { $eq: [{ $size: { $ifNull: ['$bookedSeatNumbers', []] } }, bookedSeatNumbers.length] } },
+    { $set: { bookedSeatNumbers: mergedSeatNumbers } }
+  );
+  return RideOccurrence.findById(occurrenceId).lean();
+}
+
+async function selectSeat(occurrenceId, seatNumber) {
+  if (!Number.isInteger(seatNumber) || seatNumber < 1) return null;
+  await ensureBookedSeatNumbers(occurrenceId);
+  const occ = await RideOccurrence.findOneAndUpdate(
+    {
+      _id: occurrenceId,
+      status: 'active',
+      passengerCapacity: { $gte: seatNumber },
+      bookedSeatNumbers: { $ne: seatNumber },
+      selectedSeatNumbers: { $ne: seatNumber },
+      $expr: { $lt: [{ $add: ['$confirmedSeats', { $size: { $ifNull: ['$selectedSeatNumbers', []] } }] }, '$passengerCapacity'] },
+    },
+    { $addToSet: { selectedSeatNumbers: seatNumber } },
+    { new: true }
+  );
+  return occ;
+}
+
+// Move a pending seat selection to confirmed occupancy atomically.
+async function reserveSeat(occurrenceId, seatNumber) {
+  await ensureBookedSeatNumbers(occurrenceId);
+  const occ = await RideOccurrence.findOneAndUpdate(
+    {
+      _id: occurrenceId,
+      status: 'active',
+      selectedSeatNumbers: seatNumber,
+      bookedSeatNumbers: { $ne: seatNumber },
+      passengerCapacity: { $gte: seatNumber },
+      $expr: { $lt: ['$confirmedSeats', '$passengerCapacity'] },
+    },
+    [
+      {
+        $set: {
+          confirmedSeats: { $add: ['$confirmedSeats', 1] },
+          bookedSeatNumbers: { $concatArrays: [{ $ifNull: ['$bookedSeatNumbers', []] }, [seatNumber]] },
+          selectedSeatNumbers: { $filter: { input: { $ifNull: ['$selectedSeatNumbers', []] }, as: 'seat', cond: { $ne: ['$$seat', seatNumber] } } },
+          status: {
+            $cond: {
+              if: { $gte: [{ $add: ['$confirmedSeats', 1] }, '$passengerCapacity'] },
+              then: 'full',
+              else: 'active',
+            },
+          },
+        },
+      },
+    ],
+    { new: true }
+  );
+  return occ; // null means no room or wrong status
+}
+
+async function releaseSelectedSeat(occurrenceId, seatNumber) {
+  if (!Number.isInteger(seatNumber)) return;
+  await RideOccurrence.updateOne({ _id: occurrenceId }, { $pull: { selectedSeatNumbers: seatNumber } });
+}
+
+// Decrement confirmedSeats when a booking is cancelled (flip back to 'active'
+// if it was 'full')
+async function releaseSeat(occurrenceId, seatNumber) {
+  const seatState = await ensureBookedSeatNumbers(occurrenceId);
+  const initialSeats = +seatState?.initialSeats || 0;
+  const seatToRelease = Number.isInteger(seatNumber)
+    ? seatNumber
+    : (seatState?.bookedSeatNumbers || []).find(number => number > initialSeats);
+  const bookedSeatNumbers = Number.isInteger(seatToRelease)
+    ? { $filter: { input: { $ifNull: ['$bookedSeatNumbers', []] }, as: 'seat', cond: { $ne: ['$$seat', seatToRelease] } } }
+    : { $ifNull: ['$bookedSeatNumbers', []] };
+  await RideOccurrence.findOneAndUpdate(
+    { _id: occurrenceId, $expr: { $gt: ['$confirmedSeats', { $ifNull: ['$initialSeats', 0] }] } },
+    [
+      {
+        $set: {
+          confirmedSeats: { $max: [{ $subtract: ['$confirmedSeats', 1] }, '$initialSeats'] },
+          bookedSeatNumbers,
+          status: {
+            $cond: {
+              if: { $eq: ['$status', 'cancelled'] },
+              then: 'cancelled',
+              else: { $cond: { if: { $gte: [{ $subtract: ['$confirmedSeats', 1] }, '$passengerCapacity'] }, then: 'full', else: 'active' } },
+            },
+          },
+        },
+      },
+    ]
+  );
+}
+
+// Availability summary across all active occurrences for a commute — used by
+// the matching engine to decide whether ANY upcoming date still has seats.
+async function commuteHasAvailability(commuteId) {
+  const occ = await RideOccurrence.findOne({
+    commuteId,
+    status: 'active',
+    $expr: { $lt: [{ $add: ['$confirmedSeats', { $size: { $ifNull: ['$selectedSeatNumbers', []] } }] }, '$passengerCapacity'] },
+  }).lean();
+  return !!occ;
+}
+
 const dayIndex=date=>{const day=new Date(`${date}T00:00:00Z`).getUTCDay();return (day+6)%7;};
 const nextCommuteDate=c=>{const today=new Date().toISOString().slice(0,10);const start=c.startDate&&c.startDate>today?c.startDate:today;for(let i=0;i<370;i+=1){const date=new Date(`${start}T00:00:00Z`);date.setUTCDate(date.getUTCDate()+i);const value=date.toISOString().slice(0,10);if(c.endDate&&value>c.endDate)break;if((c.days||[]).includes(dayIndex(value)))return value;}return start;};
 
@@ -198,30 +422,97 @@ app.post('/api/buddies',auth,h(async(q,s)=>{if(!q.body.buddyId||String(q.body.bu
 app.patch('/api/buddies/:id',auth,h(async(q,s)=>{if(!['accepted','rejected','blocked','removed'].includes(q.body.status))return s.status(400).json({error:'Invalid buddy status'});const buddy=await Buddy.findOne({_id:q.params.id,$or:[{userId:q.uid},{buddyId:q.uid}]});if(!buddy)return s.status(404).json({error:'Buddy relationship not found'});buddy.status=q.body.status;await buddy.save();s.json(buddy);}));
 
 // ---- commutes
-app.post('/api/commutes',auth,h(async(q,s)=>{const b=q.body;if(!b.origin||!b.dest)return s.status(400).json({error:'Pick both locations'});
-  if(!Array.isArray(b.days)||b.days.length===0)return s.status(400).json({error:'Select at least one commute day'});
-  if(!b.startDate||!b.endDate||b.endDate<b.startDate)return s.status(400).json({error:'Enter a valid date range'});
-  if(!b.startTime||!b.endTime)return s.status(400).json({error:'Enter departure and return times'});
+app.post('/api/commutes',auth,h(async(q,s)=>{const b=q.body;
+  if(!b.origin||!b.dest)return s.status(400).json({error:'Pick both locations'});
+  const tripType=b.tripType==='one_time'?'one_time':'recurring';
+  // one_time: needs a single tripDate; recurring: needs days + date range
+  if(tripType==='one_time'){
+    if(!b.tripDate)return s.status(400).json({error:'Select a date for your trip'});
+  } else {
+    if(!Array.isArray(b.days)||b.days.length===0)return s.status(400).json({error:'Select at least one commute day'});
+    if(!b.startDate||!b.endDate||b.endDate<b.startDate)return s.status(400).json({error:'Enter a valid date range'});
+  }
+  if(!b.startTime||!b.endTime)return s.status(400).json({error:'Enter departure and arrival times'});
   if(!['need','offer','either'].includes(b.role||'need'))return s.status(400).json({error:'Choose a ride type'});
   if(b.rideMode&&!['own_vehicle','hired_shared_ride'].includes(b.rideMode))return s.status(400).json({error:'Choose a valid ride mode'});
-  const route=await getRoute(b.origin,b.dest);const passengerCapacity=+b.passengerCapacity||+b.seats||1;
-  const c=await Commute.create({...b,userId:q.uid,passengerCapacity,seats:passengerCapacity,rideMode:b.rideMode||'own_vehicle',price:+b.price||0,routeGeo:route?.points||[],distanceKm:route?.distanceKm||+(km(b.origin,b.dest)*1.3).toFixed(1)});
+  const rideMode=b.rideMode==='hired_shared_ride'?'hired_shared_ride':'own_vehicle';
+  const isSharedRide=rideMode==='hired_shared_ride';
+  const owner=await User.findById(q.uid).select('vehicle');
+  let passengerCapacity,seats,requestedSeats=null,vehicleSnapshot=null,role;
+  let maleCount=0,femaleCount=0,otherCount=0;
+  if(isSharedRide){
+    requestedSeats=+(b.requestedSeats||b.seats||0);
+    if(!Number.isInteger(requestedSeats)||requestedSeats<1||requestedSeats>4)return s.status(400).json({error:'Choose between 1 and 4 intended seats'});
+    maleCount=+(b.maleCount||0);femaleCount=+(b.femaleCount||0);otherCount=+(b.otherCount||0);
+    if(![maleCount,femaleCount,otherCount].every(Number.isInteger)||maleCount<0||femaleCount<0||otherCount<0||maleCount+femaleCount+otherCount!==requestedSeats)return s.status(400).json({error:'Passenger gender counts must add up to intended seats'});
+    passengerCapacity=4;seats=requestedSeats;role='need';
+  } else {
+    const savedVehicle=owner?.vehicle;
+    const vehicleCapacity=+savedVehicle?.passengerCapacity||+savedVehicle?.seats||0;
+    if(!savedVehicle||savedVehicle.active===false||vehicleCapacity<1)return s.status(400).json({error:'Save and activate a vehicle in your profile before offering a ride'});
+    passengerCapacity=+b.passengerCapacity||+b.seats||vehicleCapacity;
+    if(!Number.isInteger(passengerCapacity)||passengerCapacity<1||passengerCapacity>vehicleCapacity)return s.status(400).json({error:'Passenger capacity must fit your saved vehicle'});
+    seats=passengerCapacity;role='offer';
+    vehicleSnapshot={make:savedVehicle.make,model:savedVehicle.model,type:savedVehicle.type,color:savedVehicle.color,passengerCapacity:vehicleCapacity};
+  }
+  const route=await getRoute(b.origin,b.dest);
+  const timeFlexibility=Math.max(0,+b.timeFlexibility||0);
+  const maximumDetour=b.maximumDetour!=null?+b.maximumDetour:null;
+  // for one_time trips use tripDate as both startDate and endDate so existing queries still work
+  const startDate=tripType==='one_time'?b.tripDate:(b.startDate||b.tripDate);
+  const endDate=tripType==='one_time'?b.tripDate:(b.endDate||b.tripDate);
+  const days=tripType==='one_time'?[dayIndex(b.tripDate)]:(b.days||[]);
+  const c=await Commute.create({
+    ...b,userId:q.uid,tripType,tripDate:tripType==='one_time'?b.tripDate:null,
+    startDate,endDate,days,passengerCapacity,seats,requestedSeats,maleCount,femaleCount,otherCount,vehicleSnapshot,role,
+    rideMode,price:+b.price||0,
+    timeFlexibility,maximumDetour,
+    routeGeo:route?.points||[],
+    distanceKm:route?.distanceKm||+(km(b.origin,b.dest)*1.3).toFixed(1),
+  });
+  await generateOccurrences(c, c.startDate, c.endDate);
   s.json(c);}));
 
 app.get('/api/commutes/mine',auth,h(async(q,s)=>s.json(await Commute.find({userId:q.uid,active:true}).sort('-createdAt'))));
-app.get('/api/commutes/:id/occupancy',auth,h(async(q,s)=>{const c=await Commute.findOne({_id:q.params.id,active:true});if(!c)return s.status(404).json({error:'Commute not found'});if(String(c.userId)!==q.uid)return s.status(403).json({error:'Not yours'});const date=q.query.date||nextCommuteDate(c);const day=dayIndex(date);const confirmed=await Booking.find({commuteId:c._id,status:'confirmed',$or:[{requestedDate:date},{requestedDate:{$exists:false},requestedDay:{$exists:false}},{requestedDate:{$exists:false},requestedDay:day}]}).select('passengerId seatNumber');const occupied=Math.min(capacityOf(c),confirmed.length);const usedSeats=new Set(confirmed.map(item=>item.seatNumber).filter(Number.isInteger));const seats=Array.from({length:capacityOf(c)},(_,index)=>({number:index+1,status:usedSeats.has(index+1)||(!usedSeats.size&&index<occupied)?'occupied':'open'}));s.json({date,passengerCapacity:capacityOf(c),occupiedSeats:occupied,availableSeats:capacityOf(c)-occupied,seats});}));
+app.get('/api/commutes/:id/occupancy',auth,h(async(q,s)=>{
+  const c=await Commute.findOne({_id:q.params.id,active:true});
+  if(!c)return s.status(404).json({error:'Commute not found'});
+  if(String(c.userId)!==q.uid)return s.status(403).json({error:'Not yours'});
+  const date=q.query.date||nextCommuteDate(c);
+  const occ=await occurrenceForDate(c,date);
+  if(!occ)return s.status(404).json({error:'No occurrence scheduled for that date'});
+  const seatState=await ensureBookedSeatNumbers(occ._id);
+  const booked=new Set(seatState?.bookedSeatNumbers||[]);
+  const selected=new Set(seatState?.selectedSeatNumbers||[]);
+  const seats=Array.from({length:occ.passengerCapacity},(_,index)=>({number:index+1,status:booked.has(index+1)?'booked':selected.has(index+1)?'selected':'available'}));
+  s.json({date,passengerCapacity:occ.passengerCapacity,occupiedSeats:occ.confirmedSeats,selectedSeats:selected.size,availableSeats:Math.max(0,occ.passengerCapacity-occ.confirmedSeats-selected.size),seats});
+}));
 
 app.get('/api/commutes/discover',auth,h(async(q,s)=>{
   const blocked=(await User.findById(q.uid).select('blocked'))?.blocked||[];
   const filter={active:true,paused:false,userId:{$ne:q.uid,$nin:blocked}};
   if(q.query.rideMode)filter.rideMode=q.query.rideMode;
   const commutes=await Commute.find(filter).sort('-createdAt').limit(Math.min(100,Math.max(1,+q.query.limit||30))).populate('userId','name phone verified gender city vehicle profileImage privacy');
-  const stats=await bookingStats(commutes.map(c=>c._id));
   const contacts=await acceptedContactIds(q.uid,commutes.map(c=>c.userId?._id));
   const preciseCommutes=await acceptedCommuteIds(q.uid,commutes.map(c=>c._id));
   const genderCounts=await visibleBookingGenderCounts(commutes.map(c=>c._id),q.uid);
-  const statMap=Object.fromEntries(stats.map(item=>[String(item._id),item]));
-  s.json(commutes.map(c=>{const stat=statMap[String(c._id)]||{count:0};return {...publicCommute(c,{precise:preciseCommutes.has(String(c._id))}),passengerCapacity:capacityOf(c),availableSeats:Math.max(0,capacityOf(c)-stat.count),genderCounts:genderCounts[String(c._id)]||{},user:pub(c.userId,{hasContact:contacts.has(String(c.userId?._id))})};}));
+  const ownerIds=commutes.map(c=>c.userId?._id).filter(Boolean);
+  const ratings=await Rating.aggregate([{$match:{toUser:{$in:ownerIds}}},{$group:{_id:'$toUser',avg:{$avg:'$stars'},count:{$sum:1}}}]);
+  const ratingMap=Object.fromEntries(ratings.map(item=>[String(item._id),item]));
+  const dates=commutes.map(c=>nextCommuteDate(c));
+  const occurrences=await Promise.all(commutes.map((c,index)=>occurrenceForDate(c,dates[index])));
+  s.json(commutes.map((c,index)=>{
+    const rating=ratingMap[String(c.userId?._id)]||{};
+    const occ=occurrences[index];
+    return {
+      ...publicCommute(c,{precise:preciseCommutes.has(String(c._id))}),
+      passengerCapacity:capacityOf(c),
+      nextOccurrenceDate:dates[index],
+      availableSeats:occ&&occ.status==='active'?Math.max(0,occ.passengerCapacity-occ.confirmedSeats-(occ.selectedSeatNumbers||[]).length):0,
+      genderCounts:genderCounts[String(c._id)]||{},
+      user:{...pub(c.userId,{hasContact:contacts.has(String(c.userId?._id))}),avg:rating.avg?+rating.avg.toFixed(1):0,count:rating.count||0},
+    };
+  }));
 }));
 
 app.get('/api/commutes/:id',auth,h(async(q,s)=>{
@@ -233,11 +524,13 @@ app.get('/api/commutes/:id',auth,h(async(q,s)=>{
 }));
 
 app.patch('/api/commutes/:id',auth,h(async(q,s)=>{const c=await Commute.findOne({_id:q.params.id,userId:q.uid});if(!c)return s.status(404).json({error:'Not found'});
-  const changeFields=['origin','dest','days','startTime','endTime','startDate','endDate','role','rideMode','price','paused','active','passengerCapacity','seats'];
+  const changeFields=['origin','dest','days','startTime','endTime','startDate','endDate','role','rideMode','price','paused','active','passengerCapacity','seats','timeFlexibility','maximumDetour'];
   const changed=changeFields.some(key=>q.body[key]!==undefined);
   if(q.body.paused!==undefined)c.paused=q.body.paused;if(q.body.active!==undefined)c.active=q.body.active;
-  ['origin','dest','days','startTime','endTime','startDate','endDate','role','rideMode','price'].forEach(k=>{if(q.body[k]!==undefined)c[k]=q.body[k]});
+  ['origin','dest','days','startTime','endTime','startDate','endDate','tripDate','tripType','role','rideMode','price'].forEach(k=>{if(q.body[k]!==undefined)c[k]=q.body[k]});
   if(q.body.passengerCapacity!==undefined||q.body.seats!==undefined){c.passengerCapacity=+q.body.passengerCapacity||+q.body.seats;c.seats=c.passengerCapacity;}
+  if(q.body.timeFlexibility!==undefined)c.timeFlexibility=Math.max(0,+q.body.timeFlexibility||0);
+  if(q.body.maximumDetour!==undefined)c.maximumDetour=q.body.maximumDetour!=null?+q.body.maximumDetour:null;
   const updated=await c.save();
   if(changed){
     const [requesters,passengers]=await Promise.all([Request.distinct('fromUser',{commuteId:c._id,status:{$in:['accepted','completed']}}),Booking.distinct('passengerId',{commuteId:c._id,status:{$in:['confirmed','completed']}})]);
@@ -256,47 +549,245 @@ app.delete('/api/commutes/:id',auth,h(async(q,s)=>{
   s.json({ok:true});
 }));
 
+// ---- ride occurrences
+
+// GET /api/occurrences?commuteId=&from=YYYY-MM-DD&to=YYYY-MM-DD
+// Returns (and lazily generates) all occurrences for a commute in the window.
+// The owner can also see cancelled occurrences; everyone else only sees active/full.
+app.get('/api/occurrences', auth, h(async (q, s) => {
+  const { commuteId, from, to } = q.query;
+  if (!commuteId) return s.status(400).json({ error: 'commuteId is required' });
+
+  const commute = await Commute.findById(commuteId);
+  if (!commute || !commute.active) return s.status(404).json({ error: 'Commute not found' });
+
+  const today = new Date().toISOString().slice(0, 10);
+  const window = {
+    from: from || today,
+    to:   to   || (commute.endDate || new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10)),
+  };
+
+  await generateOccurrences(commute, window.from, window.to);
+  const occurrences = await RideOccurrence.find({ commuteId: commute._id, date: { $gte: window.from, $lte: window.to } }).sort({ date: 1 });
+  const isOwner = String(commute.userId) === q.uid;
+
+  // Non-owners only see non-cancelled occurrences
+  const visible = isOwner
+    ? occurrences
+    : occurrences.filter(o => o.status !== 'cancelled');
+  const seatStates = await Promise.all(visible.map(o => ensureBookedSeatNumbers(o._id)));
+  const pendingRequests = await Request.find({
+    occurrenceId: { $in: visible.map(o => o._id) },
+    fromUser: q.uid,
+    status: 'pending',
+  }).select('occurrenceId seatNumber').lean();
+  const mySeats = Object.fromEntries(pendingRequests.map(r => [String(r.occurrenceId), r.seatNumber]));
+
+  s.json(visible.map((o, index) => {
+    const seatState = seatStates[index] || o;
+    const booked = new Set(seatState.bookedSeatNumbers || []);
+    const selected = new Set(seatState.selectedSeatNumbers || []);
+    const seats = Array.from({ length: o.passengerCapacity }, (_, seatIndex) => {
+      const number = seatIndex + 1;
+      const status = o.status === 'cancelled' || o.status === 'completed'
+        ? o.status
+        : booked.has(number) ? 'booked' : selected.has(number) ? 'selected' : 'available';
+      return { number, status };
+    });
+    return {
+    _id:              o._id,
+    commuteId:        o.commuteId,
+    date:             o.date,
+    startTime:        o.startTime,
+    endTime:          o.endTime,
+    origin:           o.origin,
+    dest:             o.dest,
+    passengerCapacity: o.passengerCapacity,
+    initialSeats:     o.initialSeats || 0,
+    confirmedSeats:   o.confirmedSeats,
+    selectedSeats:    (seatState.selectedSeatNumbers || []).length,
+    bookedSeatNumbers: seatState.bookedSeatNumbers || [],
+    selectedSeatNumbers: seatState.selectedSeatNumbers || [],
+    mySelectedSeat:   mySeats[String(o._id)] || null,
+    seats,
+    availableSeats:   o.status === 'active' ? Math.max(0, o.passengerCapacity - o.confirmedSeats - (seatState.selectedSeatNumbers || []).length) : 0,
+    status:           o.status,
+    cancellationReason: o.cancellationReason || null,
+    };
+  }));
+}));
+
+// PATCH /api/occurrences/:id
+// Owner only.  Supported transitions:
+//   { status: 'cancelled', reason: '...' }  — cancel a single date
+//   { status: 'active' }                    — un-cancel (if it was cancelled and hasn't happened yet)
+//   { status: 'completed' }                 — mark as done
+app.patch('/api/occurrences/:id', auth, h(async (q, s) => {
+  const occ = await RideOccurrence.findById(q.params.id);
+  if (!occ) return s.status(404).json({ error: 'Occurrence not found' });
+  if (String(occ.userId) !== q.uid) return s.status(403).json({ error: 'Not your commute' });
+
+  const { status, reason } = q.body;
+  const allowed = ['cancelled', 'active', 'completed'];
+  if (!allowed.includes(status)) return s.status(400).json({ error: `status must be one of: ${allowed.join(', ')}` });
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  if (status === 'cancelled') {
+    if (occ.status === 'completed') return s.status(400).json({ error: 'Cannot cancel a completed ride' });
+    occ.status = 'cancelled';
+    occ.cancellationReason = reason || null;
+    occ.confirmedSeats = 0;
+    occ.bookedSeatNumbers = [];
+    occ.selectedSeatNumbers = [];
+    await occ.save();
+    // Cancel all confirmed bookings for this occurrence
+    await Booking.updateMany({ occurrenceId: occ._id, status: 'confirmed' }, { status: 'cancelled' });
+    await Request.updateMany({ occurrenceId: occ._id, status: { $in: ['pending', 'accepted'] } }, { status: 'cancelled' });
+  } else if (status === 'active') {
+    if (occ.status !== 'cancelled') return s.status(400).json({ error: 'Only cancelled occurrences can be restored' });
+    if (occ.date < today) return s.status(400).json({ error: 'Cannot restore a past occurrence' });
+    occ.confirmedSeats = occ.initialSeats || 0;
+    occ.bookedSeatNumbers = Array.from({ length: occ.initialSeats || 0 }, (_, index) => index + 1);
+    occ.selectedSeatNumbers = [];
+    occ.status = occ.confirmedSeats >= occ.passengerCapacity ? 'full' : 'active';
+    occ.cancellationReason = null;
+  } else if (status === 'completed') {
+    if (!['active', 'full'].includes(occ.status)) return s.status(400).json({ error: 'Only active or full occurrences can be completed' });
+    occ.status = 'completed';
+  }
+
+  await occ.save();
+  s.json(occ);
+}));
+
+app.post('/api/commutes/:id/cancel-future', auth, h(async (q, s) => {
+  const commute = await Commute.findOne({ _id: q.params.id, userId: q.uid });
+  if (!commute) return s.status(404).json({ error: 'Commute not found' });
+  const today = new Date().toISOString().slice(0, 10);
+  await generateOccurrences(commute, today, commute.endDate || today);
+  const future = await RideOccurrence.find({
+    commuteId: commute._id,
+    date: { $gte: today },
+    status: { $nin: ['cancelled', 'completed'] },
+  }).select('_id');
+  const occurrenceIds = future.map(o => o._id);
+  if (occurrenceIds.length) {
+    await RideOccurrence.updateMany({ _id: { $in: occurrenceIds } }, {
+      $set: { status: 'cancelled', cancellationReason: 'Future commute dates cancelled', confirmedSeats: 0, bookedSeatNumbers: [], selectedSeatNumbers: [] },
+    });
+    await Booking.updateMany({ occurrenceId: { $in: occurrenceIds }, status: 'confirmed' }, { status: 'cancelled' });
+    await Request.updateMany({ occurrenceId: { $in: occurrenceIds }, status: { $in: ['pending', 'accepted'] } }, { status: 'cancelled' });
+  }
+  commute.cancelledFromDate = commute.cancelledFromDate && commute.cancelledFromDate < today ? commute.cancelledFromDate : today;
+  await commute.save();
+  s.json({ cancelledOccurrences: occurrenceIds.length, cancelledFromDate: commute.cancelledFromDate });
+}));
+
 // ---- matching engine v2
 app.post('/api/match',auth,h(async(q,s)=>{const m=q.body,me=await User.findById(q.uid);
   const blocked=Array.isArray(me.blocked)?me.blocked:[];
   const cs=await Commute.find({active:true,paused:false,userId:{$ne:q.uid,$nin:blocked}}).populate('userId','name phone verified gender city vehicle profileImage privacy');
-  const stats=await bookingStats(cs.map(c=>c._id));
   const contacts=await acceptedContactIds(q.uid,cs.map(c=>c.userId?._id));
   const preciseCommutes=await acceptedCommuteIds(q.uid,cs.map(c=>c._id));
   const genderCounts=await visibleBookingGenderCounts(cs.map(c=>c._id),q.uid);
-  const statMap=Object.fromEntries(stats.map(item=>[String(item._id),item]));
-  const rs=await Rating.aggregate([{$group:{_id:'$toUser',avg:{$avg:'$stars'},count:{$sum:1}}}]);const R=Object.fromEntries(rs.map(r=>[String(r._id),r]));
+
+  // Build a set of commuteIds that have at least one active occurrence with
+  // available seats.  Commutes with zero qualifying occurrences are excluded.
+  // We generate occurrences for the query window so the check is current.
+  const queryFrom = m.tripType==='one_time' ? m.tripDate : (m.startDate||new Date().toISOString().slice(0,10));
+  const queryTo   = m.tripType==='one_time' ? m.tripDate : (m.endDate||new Date(Date.now()+90*864e5).toISOString().slice(0,10));
+  const requestedDates = new Set(occurrenceDates(m, queryFrom, queryTo));
+  await Promise.all(cs.map(c=>generateOccurrences(c, queryFrom, queryTo)));
+  const openOccurrences = await RideOccurrence.find({
+    commuteId: { $in: cs.map(c=>c._id) },
+    status: 'active',
+    date: { $in: [...requestedDates] },
+    $expr: { $lt: [{ $add: ['$confirmedSeats', { $size: { $ifNull: ['$selectedSeatNumbers', []] } }] }, '$passengerCapacity'] },
+  }).lean();
+  const occurrenceMap = new Map();
+  for(const occurrence of openOccurrences){
+    const key=String(occurrence.commuteId);
+    occurrenceMap.set(key,[...(occurrenceMap.get(key)||[]),occurrence]);
+  }
+
+  const rs=await Rating.aggregate([{$group:{_id:'$toUser',avg:{$avg:'$stars'},count:{$sum:1}}}]);
+  const R=Object.fromEntries(rs.map(r=>[String(r._id),r]));
   const out=[];
   const now=new Date().toISOString().slice(0,10);
+  const mType=m.tripType==='one_time'?'one_time':'recurring';
+
   for(const c of cs){if(!c.userId)continue;
-    if(c.endDate&&c.endDate<now)continue;
-    if(m.startDate&&m.endDate&&c.startDate&&c.endDate&&(c.endDate<m.startDate||m.endDate<c.startDate))continue;
-    const stat=statMap[String(c._id)]||{count:0};
-    const seatsAvailable=Math.max(0,capacityOf(c)-stat.count);
-    if(seatsAvailable<=0)continue;
+
+    // ── Hard constraint: role compatibility ─────────────────────────────────
     const compatible=(m.role==='either'||c.role==='either')||(m.role==='need'&&c.role==='offer')||(m.role==='offer'&&c.role==='need');
     if(!compatible)continue;
+
+    // ── Hard constraint: date/type compatibility ─────────────────────────────
+    const cType=c.tripType||'recurring';
+    if(mType==='one_time'&&cType==='one_time'){
+      if(!m.tripDate||!c.tripDate||m.tripDate!==c.tripDate)continue;
+    } else if(mType==='one_time'&&cType==='recurring'){
+      const d=m.tripDate;if(!d)continue;
+      if(c.endDate&&c.endDate<d)continue;
+      if(c.startDate&&c.startDate>d)continue;
+      if(c.days&&c.days.length>0&&!c.days.includes(dayIndex(d)))continue;
+    } else if(mType==='recurring'&&cType==='one_time'){
+      const d=c.tripDate;if(!d)continue;
+      if(m.endDate&&m.endDate<d)continue;
+      if(m.startDate&&m.startDate>d)continue;
+      if(m.days&&m.days.length>0&&!m.days.includes(dayIndex(d)))continue;
+    } else {
+      if(c.endDate&&c.endDate<now)continue;
+      if(m.startDate&&m.endDate&&c.startDate&&c.endDate&&(c.endDate<m.startDate||m.endDate<c.startDate))continue;
+    }
+
+    const matchingOccurrences=(occurrenceMap.get(String(c._id))||[]).filter(o=>requestedDates.has(o.date));
+    if(!matchingOccurrences.length)continue;
+    const seatsAvailable=Math.max(...matchingOccurrences.map(o=>o.passengerCapacity-o.confirmedSeats-(o.selectedSeatNumbers||[]).length));
+
+    // ── Hard constraint: maximum detour ──────────────────────────────────────
     const os=km(m.origin,c.origin),ds=km(m.dest,c.dest);
+    const totalDetour=os+ds;
+    if(m.maximumDetour!=null&&totalDetour>+m.maximumDetour)continue;
+    if(c.maximumDetour!=null&&totalDetour>+c.maximumDetour)continue;
+
+    // ── Scored: route overlap ────────────────────────────────────────────────
     let routeScore=0,distAlong=0;
     if(c.routeGeo&&c.routeGeo.length>1){
       const rr=routeOverlap(c.routeGeo,m.origin,m.dest);routeScore=rr.overlapScore;distAlong=rr.distAlongRoute;
     }else{
       const base=km(c.origin,c.dest);routeScore=Math.max(0,1-(os+ds)/Math.max(base,0.5));
     }
-    const ts1=mins(m.startTime),te1=mins(m.endTime),ts2=mins(c.startTime),te2=mins(c.endTime);
+
+    // ── Scored: time overlap with flexibility window ──────────────────────────
+    const mFlex=Math.max(0,+m.timeFlexibility||0);
+    const cFlex=Math.max(0,+c.timeFlexibility||0);
+    const ts1=mins(m.startTime)-mFlex, te1=mins(m.endTime)+mFlex;
+    const ts2=mins(c.startTime)-cFlex, te2=mins(c.endTime)+cFlex;
     const overlapMin=Math.min(te1,te2)-Math.max(ts1,ts2);
     const timeScore=overlapMin>0?Math.min(1,overlapMin/Math.max(1,Math.min(te1-ts1,te2-ts2))):0;
-    const dayScore=(m.days||[]).filter(z=>c.days.includes(z)).length/Math.max(1,(m.days||[]).length);
+
+    // ── Scored: day overlap ──────────────────────────────────────────────────
+    let dayScore=1;
+    if(mType==='recurring'&&cType==='recurring'){
+      dayScore=(m.days||[]).filter(z=>c.days.includes(z)).length/Math.max(1,(m.days||[]).length);
+    }
+
     const score=Math.round(100*(0.35*routeScore+0.2*timeScore+0.2*dayScore+0.1*Math.max(0,1-os/5)+0.05*Math.max(0,1-ds/5)+0.05));
     if(score>=25){
       const r=R[String(c.userId._id)]||{};
-      const mDays=(m.days||[]).filter(z=>c.days.includes(z));
+      const mDays=mType==='recurring'?(m.days||[]).filter(z=>c.days.includes(z)):[];
+      const flexLabel=mFlex>0||cFlex>0?`±${Math.max(mFlex,cFlex)} min`:'Exact time';
       out.push({...publicCommute(c,{precise:preciseCommutes.has(String(c._id))}),score,originKm:+os.toFixed(1),destKm:+ds.toFixed(1),explanation:{
         routeOverlap:+((routeScore||0)*100).toFixed(0),
-        timeOverlap:timeScore>0.8?'Similar departure':timeScore>0.5?'Partial overlap':'Different schedule',
-        daysOverlap:mDays.length+'/'+(m.days||[]).length+' days'+(mDays.length===0?' (no overlap)':''),
+        timeOverlap:timeScore>0.8?`Similar departure (${flexLabel})`:timeScore>0.5?'Partial overlap':'Different schedule',
+        daysOverlap:mType==='one_time'?'Single date':(mDays.length+'/'+(m.days||[]).length+' days'+(mDays.length===0?' (no overlap)':'')),
         pickupAlongRoute:+distAlong.toFixed(1),
-        seatsAvailable
+        seatsAvailable,
+        availableDates:matchingOccurrences.map(o=>({date:o.date,availableSeats:o.passengerCapacity-o.confirmedSeats-(o.selectedSeatNumbers||[]).length})),
+        tripType:cType,
+        hasLiveOccurrences: true,
       },passengerCapacity:capacityOf(c),availableSeats:seatsAvailable,genderCounts:genderCounts[String(c._id)]||{},user:{...pub(c.userId,{hasContact:contacts.has(String(c.userId._id))}),avg:r.avg?+r.avg.toFixed(1):0,count:r.count||0}});
     }
   }
@@ -304,14 +795,51 @@ app.post('/api/match',auth,h(async(q,s)=>{const m=q.body,me=await User.findById(
 }));
 
 // ---- join requests
-app.post('/api/requests',auth,h(async(q,s)=>{const c=await Commute.findById(q.body.commuteId).populate('userId');if(!c)return s.status(404).json({error:'Commute not found'});
+app.post('/api/requests',auth,h(async(q,s)=>{
+  const c=await Commute.findById(q.body.commuteId).populate('userId');
+  if(!c)return s.status(404).json({error:'Commute not found'});
   if(String(c.userId._id)===q.uid)return s.status(400).json({error:'This is your own commute'});
-  if(await Request.findOne({commuteId:c._id,fromUser:q.uid,status:{$in:['pending','accepted']}}))return s.status(400).json({error:'Already requested'});
-  if(await availableSeats(c,q.body.requestedDate,q.body.requestedDay)<=0)return s.status(400).json({error:'No seats available'});
+
+  // Resolve the requested date — for one-time commutes use tripDate; for
+  // recurring, the caller must supply requestedDate.
+  const requestedDate = q.body.requestedDate
+    || (c.tripType==='one_time' ? c.tripDate : null);
+  if(!requestedDate) return s.status(400).json({error:'Provide a requestedDate for recurring commutes'});
+  if(await Request.findOne({commuteId:c._id,fromUser:q.uid,requestedDate,status:{$in:['pending','accepted']}}))return s.status(400).json({error:'Already requested for this date'});
+
+  // Ensure occurrence exists and has room
+  const occ = await occurrenceForDate(c, requestedDate);
+  if(!occ) return s.status(400).json({error:'No ride scheduled on that date'});
+  if(occ.status==='cancelled') return s.status(400).json({error:'This ride date has been cancelled'});
+  if(occ.status==='completed') return s.status(400).json({error:'This ride has already completed'});
+  if(occ.status==='full'||occ.confirmedSeats>=occ.passengerCapacity)
+    return s.status(400).json({error:'No seats available on that date'});
+  const seatNumber=+q.body.seatNumber;
+  if(!Number.isInteger(seatNumber)||seatNumber<1||seatNumber>occ.passengerCapacity)
+    return s.status(400).json({error:'Select a valid passenger seat'});
+  const selected=await selectSeat(occ._id,seatNumber);
+  if(!selected)return s.status(409).json({error:'That seat was just selected or booked. Choose another seat.'});
+
   const fromUser=await User.findById(q.uid);
-  const req=await Request.create({commuteId:c._id,fromUser:q.uid,toUser:c.userId._id,requestedDate:q.body.requestedDate,requestedDay:q.body.requestedDay,message:q.body.message});
-  await notify({userId:c.userId._id,type:'BOOKING_REQUEST',message:`${pub(fromUser).name} wants to join your ride`,rideId:c._id,commuteId:c._id,data:{requestId:req._id,requestedDate:req.requestedDate,requestedDay:req.requestedDay}});
-  s.json(req);}));
+  let req;
+  try {
+    req=await Request.create({
+      commuteId:c._id,
+      occurrenceId:occ._id,
+      fromUser:q.uid,
+      toUser:c.userId._id,
+      requestedDate,
+      seatNumber,
+      message:q.body.message,
+    });
+  } catch(error) {
+    await releaseSelectedSeat(occ._id,seatNumber);
+    if(error.code===11000)return s.status(409).json({error:'That seat already has a pending selection'});
+    throw error;
+  }
+  await notify({userId:c.userId._id,type:'BOOKING_REQUEST',message:`${pub(fromUser).name} wants to join your ride`,rideId:c._id,commuteId:c._id,data:{requestId:req._id,requestedDate:req.requestedDate,seatNumber:req.seatNumber}});
+  s.json(req);
+}));
 
 app.get('/api/requests',auth,h(async(q,s)=>{
   const [incoming,outgoing]=await Promise.all([
@@ -330,46 +858,88 @@ app.get('/api/requests',auth,h(async(q,s)=>{
   s.json({incoming:incoming.map(project),outgoing:outgoing.map(project)});
 }));
 
-app.patch('/api/requests/:id',auth,h(async(q,s)=>{const r=await Request.findOne({_id:q.params.id,$or:[{toUser:q.uid},{fromUser:q.uid}]}).populate('fromUser','name phone email profileImage verified gender city vehicle privacy');
+app.patch('/api/requests/:id',auth,h(async(q,s)=>{
+  const r=await Request.findOne({_id:q.params.id,$or:[{toUser:q.uid},{fromUser:q.uid}]}).populate('fromUser','name phone email profileImage verified gender city vehicle privacy');
   if(!r)return s.status(404).json({error:'Not found'});
   const nextStatus=q.body.status;
   if(!['accepted','rejected','cancelled'].includes(nextStatus))return s.status(400).json({error:'Invalid request status'});
   const owner=String(r.toUser)===q.uid;
-  if(nextStatus!=='cancelled'&&!owner)return s.status(403).json({error:'Only the ticket owner can decide this request'});
+  if(nextStatus!=='cancelled'&&!owner)return s.status(403).json({error:'Only the ride owner can accept or reject'});
+
+  let booking=null;
   if(nextStatus==='accepted'){
-    const c=await Commute.findById(r.commuteId);if(!c||await availableSeats(c,r.requestedDate,r.requestedDay)<=0)return s.status(400).json({error:'No seats available'});
-    r.status='accepted';await r.save();
-    const booking=await Booking.findOneAndUpdate({requestId:r._id},{commuteId:r.commuteId,passengerId:r.fromUser._id,requestId:r._id,acceptedBy:q.uid,requestedDate:r.requestedDate,requestedDay:r.requestedDay,status:'confirmed'},{upsert:true,new:true,setDefaultsOnInsert:true});
-    await notify({userId:r.fromUser._id,type:'BOOKING_ACCEPTED',message:'Your ride request was accepted!',rideId:r.commuteId,commuteId:r.commuteId,bookingId:booking._id,data:{requestId:r._id,requestedDate:r.requestedDate,requestedDay:r.requestedDay}});
-  } else {
-    r.status=nextStatus;await r.save();
-    if(nextStatus==='cancelled'){
-      const booking=await Booking.findOneAndUpdate({requestId:r._id,status:{$in:['pending','confirmed']}},{status:'cancelled'},{new:true});
-      const recipient=String(r.fromUser._id)===q.uid?r.toUser:r.fromUser._id;
-      await notify({userId:recipient,type:'BOOKING_CANCELLED',message:'A ride request was cancelled.',rideId:r.commuteId,commuteId:r.commuteId,bookingId:booking?._id,data:{requestId:r._id,requestedDate:r.requestedDate,requestedDay:r.requestedDay}});
+    if(r.status!=='pending')return s.status(400).json({error:'Only pending requests can be accepted'});
+    const occId = r.occurrenceId
+      || (await RideOccurrence.findOne({commuteId:r.commuteId,date:r.requestedDate}).lean())?._id;
+    if(!occId) return s.status(400).json({error:'No occurrence found for this request date'});
+    const seatState=await ensureBookedSeatNumbers(occId);
+    let seatNumber=r.seatNumber;
+    if(!Number.isInteger(seatNumber)){
+      const booked=new Set(seatState?.bookedSeatNumbers||[]);
+      const selected=new Set(seatState?.selectedSeatNumbers||[]);
+      seatNumber=Array.from({length:seatState?.passengerCapacity||0},(_,index)=>index+1).find(number=>!booked.has(number)&&!selected.has(number));
+      if(seatNumber&& !await selectSeat(occId,seatNumber))seatNumber=null;
     }
-    if(nextStatus==='rejected')await notify({userId:r.fromUser._id,type:'BOOKING_REJECTED',message:'Your request was declined',rideId:r.commuteId,commuteId:r.commuteId,data:{requestId:r._id,requestedDate:r.requestedDate,requestedDay:r.requestedDay}});
+    if(!Number.isInteger(seatNumber))return s.status(400).json({error:'No seat is selected for this request'});
+    const reserved = await reserveSeat(occId,seatNumber);
+    if(!reserved) return s.status(409).json({error:'That seat is no longer available. Ask the passenger to select another seat.'});
+
+    r.seatNumber=seatNumber;r.status='accepted'; await r.save();
+    booking = await Booking.findOneAndUpdate(
+      {requestId:r._id},
+      {commuteId:r.commuteId,occurrenceId:occId,passengerId:r.fromUser._id,
+       requestId:r._id,acceptedBy:q.uid,requestedDate:r.requestedDate,seatNumber,status:'confirmed'},
+      {upsert:true,new:true,setDefaultsOnInsert:true}
+    );
+    await notify({userId:r.fromUser._id,type:'BOOKING_ACCEPTED',message:'Your ride request was accepted!',rideId:r.commuteId,commuteId:r.commuteId,bookingId:booking._id,data:{requestId:r._id,requestedDate:r.requestedDate,seatNumber}});
+  } else {
+    const previousStatus=r.status;
+    r.status=nextStatus; await r.save();
+    if(nextStatus==='cancelled'){
+      const b=await Booking.findOneAndUpdate(
+        {requestId:r._id,status:{$in:['pending','confirmed']}},
+        {status:'cancelled'},
+        {new:true}
+      );
+      // Release the seat if the booking was already confirmed
+      if(b?.occurrenceId) await releaseSeat(b.occurrenceId,b.seatNumber);
+      else if(previousStatus==='pending')await releaseSelectedSeat(r.occurrenceId,r.seatNumber);
+      const recipient=String(r.fromUser._id)===q.uid?r.toUser:r.fromUser._id;
+      await notify({userId:recipient,type:'BOOKING_CANCELLED',message:'A ride request was cancelled.',rideId:r.commuteId,commuteId:r.commuteId,bookingId:b?._id,data:{requestId:r._id,requestedDate:r.requestedDate,seatNumber:r.seatNumber}});
+    }
+    if(nextStatus==='rejected'&&previousStatus==='pending')await releaseSelectedSeat(r.occurrenceId,r.seatNumber);
+    if(nextStatus==='rejected')
+      await notify({userId:r.fromUser._id,type:'BOOKING_REJECTED',message:'Your request was declined',rideId:r.commuteId,commuteId:r.commuteId,data:{requestId:r._id,requestedDate:r.requestedDate,seatNumber:r.seatNumber}});
   }
   const response=r.toObject();
   const contacts=await acceptedContactIds(q.uid,[r.fromUser?._id,r.toUser?._id||r.toUser]);
   response.fromUser=pub(r.fromUser,{isOwner:String(r.fromUser?._id)===q.uid,hasContact:contacts.has(String(r.fromUser?._id))});
-  s.json(response);}));
+  s.json(booking?{request:response,booking}:response);
+}));
 
 app.get('/api/bookings/mine',auth,h(async(q,s)=>{
   const bookings=await Booking.find({passengerId:q.uid}).sort('-createdAt').populate('commuteId').lean();
   const preciseCommutes=await acceptedCommuteIds(q.uid,bookings.map(booking=>booking.commuteId?._id));
   s.json(bookings.map(booking=>({...booking,commuteId:booking.commuteId?publicCommute(booking.commuteId,{precise:preciseCommutes.has(String(booking.commuteId._id))}):null})));
 }));
-app.patch('/api/bookings/:id',auth,h(async(q,s)=>{const b=await Booking.findById(q.params.id).populate('commuteId');if(!b)return s.status(404).json({error:'Not found'});
+app.patch('/api/bookings/:id',auth,h(async(q,s)=>{
+  const b=await Booking.findById(q.params.id).populate('commuteId');
+  if(!b)return s.status(404).json({error:'Not found'});
   if(String(b.passengerId)!==q.uid&&String(b.commuteId.userId)!==q.uid)return s.status(403).json({error:'Not allowed'});
   if(!['cancelled','completed'].includes(q.body.status))return s.status(400).json({error:'Invalid booking status'});
-  b.status=q.body.status;await b.save();
-  if(q.body.status==='cancelled'&&b.requestId)await Request.updateOne({_id:b.requestId,status:'accepted'},{status:'cancelled'});
+  const prev=b.status;
+  b.status=q.body.status; await b.save();
   if(q.body.status==='cancelled'){
+    // Release seat when a confirmed booking is cancelled
+    if(prev==='confirmed'){
+      if(b.occurrenceId) await releaseSeat(b.occurrenceId,b.seatNumber);
+      if(b.requestId) await Request.updateOne({_id:b.requestId,status:'accepted'},{status:'cancelled'});
+    }
     const recipient=String(b.passengerId)===q.uid?b.commuteId.userId:b.passengerId;
-    await notify({userId:recipient,type:'BOOKING_CANCELLED',message:'A confirmed ride was cancelled.',rideId:b.commuteId._id,commuteId:b.commuteId._id,bookingId:b._id,data:{requestId:b.requestId,requestedDate:b.requestedDate,requestedDay:b.requestedDay}});
+    await notify({userId:recipient,type:'BOOKING_CANCELLED',message:'A confirmed ride was cancelled.',rideId:b.commuteId._id,commuteId:b.commuteId._id,bookingId:b._id,data:{requestId:b.requestId,requestedDate:b.requestedDate,seatNumber:b.seatNumber}});
   }
-  s.json(b);}));
+  s.json(b);
+}));
 
 // ---- trips + cost split
 app.post('/api/trips',auth,h(async(q,s)=>{const{commuteId,distanceKm,fare}=q.body,c=await Commute.findOne({_id:commuteId,userId:q.uid});if(!c)return s.status(403).json({error:'Not your commute'});
@@ -378,7 +948,7 @@ app.post('/api/trips',auth,h(async(q,s)=>{const{commuteId,distanceKm,fare}=q.bod
   const bookings=await Booking.find(bookingFilter);const rq=bookings.length?null:await Request.find({commuteId,status:'accepted'});const riders=bookings.length?bookings.map(b=>b.passengerId):rq.map(r=>r.fromUser);if(!riders.length)return s.status(400).json({error:'No accepted riders yet'});
   if(!(+fare>0))return s.status(400).json({error:'Enter the total fare'});
   const t=await Trip.create({commuteId,driverId:q.uid,riders,origin:c.origin,dest:c.dest,tripDate,startTime:c.startTime,endTime:c.endTime,distanceKm:+distanceKm,fare:+fare,perPerson:Math.round(+fare/(riders.length+1)),status:'completed'});
-  if(bookings.length)await Booking.updateMany({_id:{$in:bookings.map(b=>b._id)}},{status:'completed'});await Request.updateMany({commuteId,status:'accepted'},{status:'completed',tripId:t._id});s.json(t);}));
+  if(bookings.length)await Booking.updateMany({_id:{$in:bookings.map(b=>b._id)}},{status:'completed'});await Request.updateMany({commuteId,status:'accepted'},{status:'completed',tripId:t._id});await RideOccurrence.updateOne({commuteId,date:tripDate,status:{$in:['active','full']}},{status:'completed'});s.json(t);}));
 
 app.get('/api/trips/mine',auth,h(async(q,s)=>{const ts=await Trip.find({$or:[{driverId:q.uid},{riders:q.uid}]}).sort('-createdAt').populate('driverId riders','name phone email profileImage verified gender city vehicle privacy').lean();
   const rs=await Rating.find({fromUser:q.uid,tripId:{$in:ts.map(t=>t._id)}});

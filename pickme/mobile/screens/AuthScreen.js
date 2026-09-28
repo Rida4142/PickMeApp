@@ -38,9 +38,7 @@ export default function AuthScreen({ onDone, back, say }) {
       setLocationError(message);
     }
   };
-  useEffect(() => {
-    if (registering) requestCurrentLocation();
-  }, [registering]);
+  // Do NOT auto-fetch location — let the user tap the button when ready.
   const validate = () => {
     const next = {};
     const phone = values.phone.replace(/\D/g, '');
@@ -75,7 +73,7 @@ export default function AuthScreen({ onDone, back, say }) {
     <Field label="Phone Number" required error={errors.phone}><In placeholder="03001234567" keyboardType="phone-pad" value={values.phone} onChangeText={set('phone')} /></Field>
     {registering && <Field label="Gender" required error={errors.gender}><View style={s.selectWrap}><Picker selectedValue={values.gender} onValueChange={set('gender')} style={s.genderPicker}><Picker.Item label="Select gender" value="" />{genders.map((gender) => <Picker.Item key={gender} label={gender} value={gender} />)}</Picker></View></Field>}
     {registering && <Field label="CNIC" required error={errors.cnic}><In placeholder="13-digit CNIC" keyboardType="numeric" value={values.cnic} onChangeText={set('cnic')} /></Field>}
-    {registering && <Field label="Current Location" required error={errors.city}><View style={s.locationControl}><In placeholder={locationStatus === 'loading' ? 'Getting your current location...' : 'Current general location'} value={values.city} editable={false} /><TouchableOpacity onPress={requestCurrentLocation} disabled={locationStatus === 'loading'}><Text style={s.locationRetry}>{locationStatus === 'loading' ? 'Requesting location...' : 'Use my current location'}</Text></TouchableOpacity>{!!locationError && <Text style={s.authError}>{locationError}</Text>}</View></Field>}
+    {registering && <Field label="Current Location" required error={errors.city}><View style={s.locationControl}><In placeholder="Type your area, or tap below to detect" value={values.city} editable={locationStatus !== 'loading'} onChangeText={set('city')} /><TouchableOpacity onPress={requestCurrentLocation} disabled={locationStatus === 'loading'}><Text style={s.locationRetry}>{locationStatus === 'loading' ? 'Detecting location…' : locationStatus === 'ready' ? '↺ Re-detect location' : '⊙ Use my current location'}</Text></TouchableOpacity>{!!locationError && <Text style={s.authError}>{locationError}</Text>}</View></Field>}
     <Field label="Password" required error={errors.password}><In placeholder={registering ? 'At least 6 characters' : 'Your password'} secureTextEntry value={values.password} onChangeText={set('password')} /></Field>
     {!!errors.form && <Text style={s.authFormError}>{errors.form}</Text>}<Btn yellow t={registering ? 'Sign Up' : 'Log In'} onPress={submit} /><Text onPress={toggleMode} style={s.authModeToggle}>{registering ? 'Already have an account? Log in' : 'New here? Sign up'}</Text>
   </View></ScrollView></KeyboardAvoidingView></SafeAreaView>;

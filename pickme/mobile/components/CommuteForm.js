@@ -16,11 +16,11 @@ function ChoiceChip({ children, selected, onPress, style }) {
   return <Animated.View style={{ transform: [{ scale }] }}><TouchableOpacity activeOpacity={0.86} onPress={onPress} style={style}>{children}</TouchableOpacity></Animated.View>;
 }
 
-export default function CommuteForm({ form, setForm, post }) {
+export default function CommuteForm({ form, setForm, post, compact = false }) {
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   return <View>
-    <Text style={s.formTitle}>{post ? 'Plan your recurring commute' : 'Choose your route'}</Text>
-    <RoutePicker o={form.origin} d={form.dest} setO={(value) => update('origin', value)} setD={(value) => update('dest', value)} />
+    {!compact && <Text style={s.formTitle}>{post ? 'Plan your recurring commute' : 'Choose your route'}</Text>}
+    <RoutePicker compact={compact} o={form.origin} d={form.dest} setO={(value) => update('origin', value)} setD={(value) => update('dest', value)} />
     {post && <>
       <Text style={s.lbl}>Days you travel</Text>
       <View style={{ flexDirection: 'row', gap: 6 }}>{DAYS.map((day, index) => { const selected = form.days.includes(index); return <ChoiceChip key={index} selected={selected} onPress={() => update('days', selected ? form.days.filter((item) => item !== index) : [...form.days, index])} style={[s.day, selected && { backgroundColor: C.y, borderColor: C.primaryDark }]}><Text style={{ fontWeight: '700', color: C.ink }}>{day}</Text></ChoiceChip>; })}</View>
